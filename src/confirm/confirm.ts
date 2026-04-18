@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { remake } from '../make-new/remake';
-import { refinementDiagnostics } from '../granularity-view/create-granularity-panel';
+import { refinementDiagnostics } from '../operation-panel-view/create-granularity-panel';
 // --- 类型定义 ---
 
 enum LineStatus {

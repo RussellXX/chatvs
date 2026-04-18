@@ -162,8 +162,8 @@
       "RefinementContainer": [
         {
           "type": "webview",
-          "id": "GranularityView",
-          "name": "Granularity panel",
+          "id": "OperationPanelView",
+          "name": "Operation panel",
           "visibility": "visible"
         }
       ]

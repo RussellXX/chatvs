@@ -1,13 +1,11 @@
-import assert from 'assert'
 import * as vscode from 'vscode'
 import * as path from 'path'
 import * as fs from 'fs'
-import { DesignmentTreeNode, DirectoryNode, NodeType } from './designment-tree-data-provider'
+import { DesignmentTreeNode } from './designment-tree-data-provider'
 import { topoSortLeafModules } from '../tools/module-topology-util'
-import * as designmentService from './designment-tree-service'
 import * as openaiHelper from '../openai/openai-helper'
 import * as settings from '../settings/settings'
-import { ModulesArraySchema, LeafModulesArraySchema, DataStructuresArraySchema, validateModulePrefix } from '../openai/schemas'
+import { LeafModulesArraySchema } from '../openai/schemas'
 
 function writeJsonAtomically(filePath: string, data: any) {
     const tempPath = `${filePath}.tmp.${Date.now()}`
@@ -45,241 +43,6 @@ function getProjectRootPath(element: DesignmentTreeNode): string {
     return element.absolutePath
 }
 
-export async function doModuleDivision(
-    parent: DirectoryNode, 
-    context: vscode.ExtensionContext
-) {
-
-    const aiPath = settings.getAiPath()
-    const projectRootPath = getProjectRootPath(parent)
-    const modulesPath = path.join(projectRootPath, 'modules.json')
-    const projectName = path.basename(projectRootPath)
-    const ongoingLeafModulesPath = path.join(projectRootPath, 'ongoing_leaf_modules.json')
-    const currentContentPath = parent.getContentFilePath()
-    const isFirstLevel = parent.type === NodeType.Project
-
-    assert(currentContentPath, 'Module division on a node without content file path is not allowed.')
-
-    let expectedPrefix = ''
-    let prompt: { system: string, user: string }
-
-    let allModules = readJsonSafe(modulesPath);
-    let ongoingLeafModules = readJsonSafe(ongoingLeafModulesPath)
-
-    if (isFirstLevel) {
-        // 第一层：重置所有列表
-        allModules = [] 
-        ongoingLeafModules = []
-        
-        // 即使是第一层，也可以先清空文件，确保 Prompt 读到的是空数组（如果 Prompt 逻辑需要的话）
-        writeJsonAtomically(modulesPath, [])
-        writeJsonAtomically(ongoingLeafModulesPath, [])
-
-        prompt = await openaiHelper.getModuleDivisionPrompt1(currentContentPath, context)
-        
-        expectedPrefix = ''  // 不再要求项目名前缀
-    } else {
-
-        const rawModuleName = path.dirname(path.relative(aiPath, currentContentPath))
-        const currentModuleName = rawModuleName.split(path.sep).join('.')
-        
-        // 从 currentModuleName 中移除项目名前缀，用于 expectedPrefix 验证
-        const prefixToRemove = projectName + '.';
-        const cleanModuleName = currentModuleName.startsWith(prefixToRemove)
-            ? currentModuleName.substring(prefixToRemove.length)
-            : currentModuleName;
-        
-        expectedPrefix = cleanModuleName + '.'
-
-        const requirementsPath = path.join(aiPath, projectName, 'content.txt')
-        
-        prompt = await openaiHelper.getModuleDivisionPrompt2(ongoingLeafModulesPath, requirementsPath, currentModuleName, context)
-    }
-
-    const MAX_RETRIES = 3
-    let retryCount = 0
-    let result: any[] = []
-    let isValidResult = false
-
-    while (retryCount < MAX_RETRIES && !isValidResult) {
-        if (retryCount > 0) {
-            console.log(`[ModuleDivision] 校验失败，正在进行第 ${retryCount} 次重试...`)
-        }
-
-        try {
-            // 使用 schema 验证，callOpenAIForJSON 内部会自动重试
-            const resultString = await openaiHelper.callOpenAIForJSON(
-                prompt.system, 
-                prompt.user,
-                ModulesArraySchema,
-                3
-            )
-            const cleanJson = resultString.replace(/```json/g, '').replace(/```/g, '').trim()
-            result = JSON.parse(cleanJson)
-
-            // 额外的前缀校验
-            const prefixValidation = validateModulePrefix(result, expectedPrefix)
-            if (prefixValidation.valid) {
-                isValidResult = true
-            } else {
-                console.warn(`[ModuleDivision] 校验失败: 存在模块名不符合前缀规范 "${expectedPrefix}"，不符合的模块: ${prefixValidation.invalidModules.join(', ')}`)
-                // 更新 prompt，让 LLM 知道问题
-                prompt.user += `\n\n注意：以下模块名称不符合要求，必须以 "${expectedPrefix}" 开头: ${prefixValidation.invalidModules.join(', ')}。请修正。`
-            }
-        } catch (e) {
-            console.error(`[ModuleDivision] 解析或调用出错 (Attempt ${retryCount + 1}):`, e)
-        }
-
-        if (!isValidResult) {
-            retryCount++
-        }
-    }
-
-    if (!isValidResult) {
-        // [修改] 抛出错误，以便上层捕获
-        throw new Error(`模块划分失败：LLM 未能生成符合命名规范("${expectedPrefix}*")的结果。`)
-    }
-
-    const pendingRenames: { src: string, dest: string }[] = [];
-    const tempFilesToDelete: string[] = [];
-
-    const stageJsonWrite = (targetPath: string, data: any) => {
-        const tempPath = `${targetPath}.tmp.${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf8');
-        tempFilesToDelete.push(tempPath); // 注册以便出错时清理
-        pendingRenames.push({ src: tempPath, dest: targetPath }); // 注册待提交的操作
-    }
-
-    try {
-        // 如果不是第一层，现在划分成功了，才从叶子节点列表中移除“父模块”
-        if (!isFirstLevel) {
-            const rawModuleName = path.dirname(path.relative(aiPath, currentContentPath))
-            
-            // 使用 path 字段来匹配删除父模块
-            ongoingLeafModules = ongoingLeafModules.filter((mod: any) => {
-                const modPath = mod.path ? mod.path.replace(/[\/\\]/g, path.sep) : '';
-                return modPath !== rawModuleName;
-            })
-            
-            // 获取父模块的 name（不含项目名）- 从 path 中提取
-            const pathParts = rawModuleName.split(path.sep).filter(p => p && p !== projectName);
-            const parentModuleName = pathParts.join('.');
-
-            // 更新依赖模块
-            const newModuleNames = result.map((m: any) => m.name)
-            // 使用 Map 记录受影响模块以去重
-            const affectedModules = new Map<string, any>();
-
-            const updateDependencies = (modulesList: any[]) => {
-                modulesList.forEach((mod: any) => {
-                    // 检查是否依赖被拆分的父模块
-                    if (mod.dependencies && Array.isArray(mod.dependencies) && 
-                        parentModuleName && mod.dependencies.includes(parentModuleName)) {
-                        mod.dependencies = mod.dependencies.filter((d: string) => d !== parentModuleName)
-                        newModuleNames.forEach((newName: string) => {
-                            if (!mod.dependencies.includes(newName)) {
-                                mod.dependencies.push(newName)
-                            }
-                        })
-                        affectedModules.set(mod.name || mod.module_name, mod);
-                    }
-                })
-            }
-            updateDependencies(ongoingLeafModules)
-            updateDependencies(allModules)
-            // 预写入受影响的 content.txt
-            affectedModules.forEach((mod, modName) => {
-                if (mod.path) {
-                    const modContentPath = path.join(aiPath, mod.path, 'content.txt')
-                    if (fs.existsSync(modContentPath)) {
-                        stageJsonWrite(modContentPath, mod);
-                    }
-                } else {
-                    console.warn(`[ModuleDivision] 模块 ${modName} 缺少 path 属性，跳过更新。`)
-                }
-            })
-        }
-        result.forEach((module: any) => {
-            module.path = path.join(projectName, module.name.replace(/\./g, path.sep));
-            allModules.push(module)
-            ongoingLeafModules.push(module)
-
-            designmentService.createModule(
-                parent, 
-                module.name.split('.').pop(),
-                JSON.stringify(module, null, 2)
-            )
-        })
-
-        stageJsonWrite(modulesPath, allModules)
-        stageJsonWrite(ongoingLeafModulesPath, ongoingLeafModules)
-
-        pendingRenames.forEach(op => {
-            try {
-                fs.renameSync(op.src, op.dest)
-            } catch (renameError) {
-                // 极端情况下的重命名失败 (如文件占用)
-                console.error(`Commit failed for ${op.dest}:`, renameError)
-                throw renameError
-            }
-        });
-
-    } catch (error) {
-        console.error('Transaction failed, rolling back temp files...', error);
-        
-        // 清理所有创建的临时文件
-        tempFilesToDelete.forEach(p => { 
-            if (fs.existsSync(p)) {
-                try { fs.unlinkSync(p); } catch(e) {}
-            } 
-        });
-
-        // [修改] 抛出错误，以便上层捕获
-        throw new Error(`保存模块数据时发生错误: ${error}`)
-    }
-}
-
-export async function getCommonDS(
-    targetNode: DirectoryNode,
-    context: vscode.ExtensionContext
-) {
-    const projectPath = targetNode.absolutePath
-    const requirementsPath = path.join(projectPath, 'content.txt')
-    const ongoingLeafModulesPath = path.join(projectPath, 'ongoing_leaf_modules.json')
-    const prompt = await openaiHelper.getCommonDSPrompt(ongoingLeafModulesPath, requirementsPath, context)
-    
-    try {
-        const resultString = await openaiHelper.callOpenAIForJSON(
-            prompt.system, 
-            prompt.user,
-            DataStructuresArraySchema,
-            3
-        )
-        const result = JSON.parse(resultString.replace(/```json/g, '').replace(/```/g, '').trim())
-
-        const dsPath = path.join(projectPath, 'common_data_structures.json')
-        
-        if (result) {
-            writeJsonAtomically(dsPath, result)
-        }
-        
-        const commonDSNode = new DirectoryNode(
-            'Common Data Structures',
-            dsPath, // TODO
-            NodeType.DataStructure,
-            targetNode,
-            dsPath
-        )
-
-        // 将数据结构节点添加到children中，使其在树中可见
-        targetNode.children.unshift(commonDSNode)
-
-    } catch (error) {
-        console.error('生成通用数据结构失败:', error)
-        // [修改] 抛出错误，以便上层捕获
-        throw error
-    }
-}
 
 export async function getLeafModules(
     projectPath: string,
@@ -302,7 +65,7 @@ export async function getLeafModules(
 
         // Currently, we assume that the topology sequence is fixed after designment stage.
         const sortedResult = topoSortLeafModules(result)
-        const aiPath = settings.getAiPath()
+        const aiPath = settings.getPseudoPath()
         const projectName = path.basename(projectPath)
 
         sortedResult.forEach((item: any, index: any) => {

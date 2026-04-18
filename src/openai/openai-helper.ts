@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { z } from 'zod';
 import { validateWithSchema } from './schemas';
-import { getAzureOpenAIConfig, getAiPath, getCodesPath } from '../settings/settings';
+import { getAzureOpenAIConfig, getPseudoPath, getCodesPath } from '../settings/settings';
 
 dotenv.config();
 
@@ -156,7 +156,7 @@ export async function callOpenAIForJSON<T = any>(
  */
 async function getDependencyModulesCode(currentModulePath: string, codeType: 'pseudocode' | 'actual' = 'pseudocode'): Promise<string> {
     try {
-        const aiPath = getAiPath();
+        const aiPath = getPseudoPath();
 
         // 使用 path.relative 和 path.dirname 来安全地获取项目根路径
         // currentModulePath 是模块目录，需要向上找到项目根目录
@@ -656,7 +656,7 @@ async function getGenerateCodePromptForPython(fileContent: string, lastGranulari
     // 获取实际数据结构文件内容
     let actualDataStructureCode = '';
     if (currentModulePath) {
-        const aiPath = getAiPath();
+        const aiPath = getPseudoPath();
         const relativePath = path.relative(aiPath, currentModulePath);
         const pathParts = relativePath.split(path.sep);
 
@@ -727,7 +727,7 @@ async function getGenerateCodePromptGeneric(fileContent: string, lastGranularity
     // 获取实际数据结构文件内容
     let actualDataStructureCode = '';
     if (currentModulePath) {
-        const aiPath = getAiPath();
+        const aiPath = getPseudoPath();
         const relativePath = path.relative(aiPath, currentModulePath);
         const pathParts = relativePath.split(path.sep);
 

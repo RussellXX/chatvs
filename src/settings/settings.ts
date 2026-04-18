@@ -114,7 +114,7 @@ export function getProjectPath(): string {
  * 获取伪代码路径
  * 返回 projectPath/pseudocodes
  */
-export function getAiPath(): string {
+export function getPseudoPath(): string {
     const projectPath = getProjectPath()
     
     // 首次调用时检查目录是否存在
@@ -218,7 +218,7 @@ function checkAndPromptCreateStructure(): void {
  */
 export async function ensureProjectStructure(): Promise<boolean> {
     const projectPath = getProjectPath()
-    const pseudocodesPath = getAiPath()
+    const pseudocodesPath = getPseudoPath()
     const codesPath = getCodesPath()
     
     const needsCreation: string[] = []

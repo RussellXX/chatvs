@@ -1,171 +1,152 @@
-import assert from 'assert'
 import * as vscode from 'vscode'
 import * as path from 'path'
-import * as fs from 'fs'
 import { buildTreeFromSerializedForm, persistenceTreeNode, persistTree } from './designment-tree-persistence'
-import { getLangIconPath } from '../tools/lang-util'
+import { getTypeByClass, registerNodeType } from './node-type-registry'
 
-export enum NodeType {
-    Project,
-    Module,
-    Requirement,
-    DataStructure,
-    NormalDirectory,
-    NormalFile
-}
-
-// It's only for designment stage for now.
-export enum ProjectState {
-    empty,
-    dataStructureExtractable,
-    designmentCompletable,
-    designmentCompleted
-}
+const CONTENT_FILENAME = 'content.txt';
+const REQUIREMENT_NODE_LABEL = 'Project Requirement'
 
 export abstract class DesignmentTreeNode {
     constructor(
         public label: string,
         public absolutePath: string,
-        public type: NodeType,
-        public parent?: DirectoryNode,
+        public parent?: ProjectNode | ModuleNode,
+        public children?: (ModuleNode | RequirementNode)[]
     ) {}
 
-    abstract getContentFilePath(): string | undefined
-    abstract isRefinable(): boolean
     abstract isExtendable(): boolean
     abstract isLeaf(): boolean
+    abstract getContentFilePath(): string
+
     // Get the object form of this node for serialization, which can be directly used to construct the same node.
-    abstract getObject(): persistenceTreeNode
-
-    getTypeString(): string {
-        return NodeType[this.type]
+    getObject(): persistenceTreeNode {
+        const type = getTypeByClass(this.constructor);
+        if (!type) {
+            throw new Error(`Unknown node class: ${this.constructor.name}`);
+        }
+        return {
+            label: this.label,
+            absolutePath: this.absolutePath,
+            type,
+            childrenCount: this.children?.length ?? 0
+        };
     }
 
-    getProjectState(): ProjectState {
-        let iter: DesignmentTreeNode = this
-        while (iter.parent) iter = iter.parent
-        if (iter.type === NodeType.Project && iter instanceof DirectoryNode) {
-            const leafModuleJsonPath = path.join(iter.absolutePath, 'leaf_modules.json')
-            if (fs.existsSync(leafModuleJsonPath))                                                   return ProjectState.designmentCompleted
-            else if (iter.children.find(child => child.type === NodeType.DataStructure))             return ProjectState.designmentCompletable
-            else if (iter.children.filter(child => child instanceof DirectoryNode).length === 0)     return ProjectState.empty
-            else return ProjectState.dataStructureExtractable
-        } else {
-            throw Error('Unexpected error: root node is not of project type.')
+    // Get the root node.
+    getRoot(): ProjectNode {
+        let iterator: DesignmentTreeNode = this;
+        while (iterator.parent) {
+            iterator = iterator.parent;
         }
+
+        if (!(iterator instanceof ProjectNode)) {
+            throw new Error('Unexpected error: root node not of type ProjectNode.');
+        }
+        return iterator
     }
 
-    switchBannedProjectState(): DirectoryNode {
-        let iter: DesignmentTreeNode = this
-        while (iter.parent) iter = iter.parent
-        if (iter.type === NodeType.Project && iter instanceof DirectoryNode) {
-            // Switch banned state for all directory nodes under this project.
-            function switchBannedState(node: DirectoryNode): void {
-                node.banned = !node.banned
-                node.children.forEach(child => {
-                    if (child instanceof DirectoryNode) {
-                        switchBannedState(child)
-                    }
-                }) 
-            }
-
-            switchBannedState(iter)
-            return iter
-        } else {
-            throw Error('Unexpected error: root node is not of project type.')
-        }
+    static fromObject(
+        obj: persistenceTreeNode,
+        parent?: ProjectNode | ModuleNode
+    ): DesignmentTreeNode {
+        throw new Error('DesignmentTreeNode subclass must implement static fromObject.')
     }
 }
-    
 
-export class FileNode extends DesignmentTreeNode {
+export class ProjectNode extends DesignmentTreeNode {
+
+    public children: (ModuleNode | RequirementNode)[] = []
+
     constructor(
         label: string,
         absolutePath: string,
-        type: NodeType.Requirement | NodeType.NormalFile,
-        parent?: DirectoryNode,
     ) {
-        super(label, absolutePath, type, parent)
-    }   
+        super(label, absolutePath)
+        this.children.push(
+            new RequirementNode(absolutePath, this)
+        )
+    }
+
+    isExtendable(): boolean {
+        return true;
+    }
+
+    isLeaf(): boolean {
+        return false;
+    }
 
     getContentFilePath(): string {
-        return this.absolutePath
+        return path.join(this.absolutePath, CONTENT_FILENAME); // to be checked
     }
 
-    isRefinable(): boolean {
-        return false
-    }
-
-    isExtendable(): boolean {
-        return false
-    }
-
-    isLeaf(): boolean {
-        return true
-    }
-
-    getObject(): persistenceTreeNode {
-        return {
-            label: this.label,
-            absolutePath: this.absolutePath,
-            type: this.getTypeString(),
-            childrenCount: 0,
-        }
+    static fromObject(obj: persistenceTreeNode): ProjectNode {
+        const node = new ProjectNode(obj.label, obj.absolutePath);
+        node.children = [];
+        return node;
     }
 }
 
-export class DirectoryNode extends DesignmentTreeNode {
-    public children: DesignmentTreeNode[]
-    public banned: boolean = false
-    public contentFilePath?: string
+export class ModuleNode extends DesignmentTreeNode {
+    
+    public children: ModuleNode[]
+
     constructor(
         label: string,
         absolutePath: string,
-        type: NodeType.Project | NodeType.Module | NodeType.DataStructure | NodeType.NormalDirectory,
-        parent?: DirectoryNode,
-        contentFilePath?: string,
-        children?: DesignmentTreeNode[],
-        banned?: boolean
+        parent: ProjectNode | ModuleNode,
+        children?: ModuleNode[]
     ) {
-        super(label, absolutePath, type, parent)
+        super(label, absolutePath, parent)
         this.children = children || []
-        this.banned = banned || false
-        this.contentFilePath = contentFilePath
-    }
-    
-    getContentFilePath(): string | undefined {
-        return this.contentFilePath
-    }
-
-    isRefinable(): boolean {
-        return this.type === NodeType.Module && this.children.length === 0 && this.getProjectState() === ProjectState.designmentCompleted
     }
 
     isExtendable(): boolean {
-        return this.children.length > 0
+        return this.children.length > 0;
     }
 
     isLeaf(): boolean {
-        return this.children.length === 0
+        return this.children.length === 0;
     }
 
-    getObject(): persistenceTreeNode {
-        return {
-            label: this.label,
-            absolutePath: this.absolutePath,
-            type: this.getTypeString(),
-            childrenCount: this.children.length,
-            contentFilePath: this.contentFilePath
-        }
+    getContentFilePath(): string {
+        return path.join(this.absolutePath, CONTENT_FILENAME); // to be checked
     }
 
-    // When the node is selected, whether the module creating button should be activated.
-    allowModuleDivisionButtonWhenSelected(): boolean {
-        const projectState = this.getProjectState()
-        return (projectState === ProjectState.empty || projectState === ProjectState.dataStructureExtractable) && !this.banned
+    static fromObject(
+        obj: persistenceTreeNode,
+        parent: ProjectNode | ModuleNode
+    ): ModuleNode {
+        return new ModuleNode(obj.label, obj.absolutePath, parent);
     }
 }
 
+export class RequirementNode extends DesignmentTreeNode {
+    constructor(
+        absolutePath: string,
+        parent: ProjectNode
+    ) {
+        super(REQUIREMENT_NODE_LABEL, absolutePath, parent)
+    }
+
+    isExtendable(): boolean {
+        return false;
+    }
+
+    isLeaf(): boolean {
+        return true;
+    }
+
+    getContentFilePath(): string {
+        return this.absolutePath;
+    }
+
+    static fromObject(
+        obj: persistenceTreeNode,
+        parent: ProjectNode
+    ): RequirementNode {
+        return new RequirementNode(obj.absolutePath, parent);
+    }
+}
 
 // Use singleton pattern for global unique instance.
 export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<DesignmentTreeNode> {
@@ -197,7 +178,7 @@ export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<Desig
 
     getTreeItem(element: DesignmentTreeNode): vscode.TreeItem {
         const treeItem = new vscode.TreeItem(element.label, this.getCollapsibleState(element))
-        treeItem.contextValue = this.getContextValue(element)
+        // treeItem.contextValue = this.getContextValue(element)
         treeItem.iconPath = this.getIconPath(element)
         return treeItem
     }
@@ -208,53 +189,16 @@ export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<Desig
 
     private getIconPath(element: DesignmentTreeNode): vscode.ThemeIcon | vscode.Uri {
 
-        if (element instanceof DirectoryNode && (element.type == NodeType.Project || element.type == NodeType.Module) && element.banned) {
-            // Show spinning circle.
-            return new vscode.ThemeIcon('loading~spin')
+        if (element instanceof ProjectNode) return new vscode.ThemeIcon('project', new vscode.ThemeColor('charts.white'));
+        else if (element instanceof ModuleNode) {
+            const iconName = element.isLeaf() ? 'circle' : 'type-hierarchy';
+            return new vscode.ThemeIcon(iconName, new vscode.ThemeColor('charts.blue'));
         }
-
-        switch (element.type) {
-            case NodeType.Project:          
-                return new vscode.ThemeIcon('project', new vscode.ThemeColor('charts.white'))
-            case NodeType.Module:           
-                const iconName = element.isLeaf() ? 'circle' : 'type-hierarchy'
-                return new vscode.ThemeIcon(iconName, new vscode.ThemeColor('charts.blue'))
-            case NodeType.Requirement:      
-                return new vscode.ThemeIcon('checklist', new vscode.ThemeColor('charts.yellow'))
-            case NodeType.DataStructure:    
-                return new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.orange'))
-            case NodeType.NormalDirectory:
-                return new vscode.ThemeIcon('folder', new vscode.ThemeColor('charts.white'))
-            case NodeType.NormalFile:
-                const langIconPath = getLangIconPath(element.absolutePath)
-                return langIconPath ? vscode.Uri.file(langIconPath) : new vscode.ThemeIcon('list-flat', new vscode.ThemeColor('charts.white'))
-            default:
-                throw new Error(`Unexpected node type for icon path retrieval: ${NodeType[element.type]}`)
+        else if (element instanceof RequirementNode) return new vscode.ThemeIcon('checklist', new vscode.ThemeColor('charts.yellow'));
+        else {
+            // No other types
+            throw new Error('Unexpected node type for icon path retrieval.')
         }
-    }
-
-
-    private getContextValue(element: DesignmentTreeNode): string {
-        let contextValue = element.getTypeString().toLowerCase()
-
-        // Only module nodes and project nodes need extra context value.
-        if (element instanceof DirectoryNode) {
-            if (element.banned) contextValue += ' banned'
-            if (element.type === NodeType.Project) {
-                assert(element instanceof DirectoryNode, 'Unexpected error: node of type Project is not a DirectoryNode.')
-                const suffix = ' ' + ProjectState[element.getProjectState()]
-                contextValue += suffix
-            } else if (element.type === NodeType.Module) {
-                if (element.isLeaf()) {
-                    contextValue += ' leaf'
-                }
-
-                if (element.getProjectState() !== ProjectState.dataStructureExtractable) {
-                    contextValue += ' fixed'
-                }
-            }
-        }
-        return contextValue
     }
 
 
@@ -264,24 +208,22 @@ export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<Desig
         }
 
         return Promise.resolve(
-            element instanceof DirectoryNode ? element.children : []
+            element.children ?? []
         )
     }
 
 
     // Given the absolute path of project, then return the corresponding project node.
-    getProjectNodeByAbsolutePath(absolutePath: string): DirectoryNode | undefined {
-        // 使用更鲁棒的查找方式，避免路径格式差异导致的问题
+    getProjectNodeByAbsolutePath(absolutePath: string): ProjectNode | undefined {
         return this.localNodeTree.find(node => 
-            node instanceof DirectoryNode && 
+            node instanceof ProjectNode && 
             path.resolve(node.absolutePath) === path.resolve(absolutePath)
-        ) as DirectoryNode | undefined
+        ) as ProjectNode | undefined
     }
 
     // Update the view after changing node data.
     refresh(fileNode: DesignmentTreeNode | DesignmentTreeNode[] | undefined | null): void {
         this._onDidChangeTreeData.fire(fileNode)
-        // 每次刷新时都持久化树结构，确保数据及时保存
         persistTree(this.localNodeTree)
     }
 
@@ -290,10 +232,8 @@ export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<Desig
     dispose() {
         persistTree(this.localNodeTree)
     }
-
-    // Banned the whole project that the given node is in.
-    switchBannedStateForWholeProject(node: DesignmentTreeNode): void {
-        const projectNode = node.switchBannedProjectState()
-        this.refresh(projectNode)
-    }
 }
+
+registerNodeType(ProjectNode, 'Project');
+registerNodeType(ModuleNode, 'Module');
+registerNodeType(RequirementNode, 'Requirement');

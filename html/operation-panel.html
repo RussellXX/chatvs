@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="{{styleUri}}" rel="stylesheet">
+    <title>操作面板</title>
+</head>
+
+<body>
+    <!-- ① 设计树 -->
+    <div class="section-title tree-title">设计树</div>
+    <div id="tree-root" class="tree-root"></div>
+
+    <!-- ② 叶子拓扑顺序 -->
+    <div class="section-title sub-title">叶子拓扑顺序</div>
+    <div id="leaf-order-root" class="leaf-order-root"></div>
+
+    <!-- ③ 精化历史 -->
+    <div class="section-title sub-title">精化历史</div>
+    <div id="refinement-history-root" class="refinement-history-root">
+        <span class="hint-text">请先选中一个叶子模块</span>
+    </div>
+
+    <!-- ④ 自定义提示词 -->
+    <div class="section-title sub-title">自定义提示词（可选）</div>
+    <textarea id="prompt-input" class="prompt-input" rows="2"
+              placeholder="为本次拆分 / 精化 / 代码生成补充提示（留空则使用默认提示词）"></textarea>
+
+    <!-- ⑤ 操作按钮栏 -->
+    <div class="btn-bar">
+        <button type="button" id="divide-btn"  class="action-btn divide-btn">拆分</button>
+
+        <!-- 精化下拉组合按钮 -->
+        <div class="split-btn-group">
+            <button type="button" id="refine-main-btn" class="action-btn refine-btn">精化</button>
+            <button type="button" id="refine-dropdown-btn" class="action-btn refine-btn refine-arrow-btn"
+                    aria-label="精化选项">▾</button>
+            <div id="refine-dropdown" class="dropdown-menu hidden">
+                <div class="dropdown-item" data-action="refine">全局精化</div>
+                <div class="dropdown-item" data-action="localRefine">局部精化</div>
+                <div class="dropdown-item" data-action="generateCode">代码生成</div>
+            </div>
+        </div>
+
+        <button type="button" id="confirm-btn" class="action-btn confirm-btn">确认</button>
+    </div>
+
+    <!-- D3.js -->
+    <script src="{{d3Uri}}"></script>
+    <!-- 主逻辑 -->
+    <script src="{{scriptUri}}"></script>
+</body>
+
+</html>
