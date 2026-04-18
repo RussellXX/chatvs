@@ -1,8 +1,7 @@
 import * as vscode from 'vscode'
-import * as path from 'path'
 import * as fs from 'fs'
 import * as designmentService from './designment-tree-service'
-import { DesignmentTreeDataProvider, RequirementNode } from './designment-tree-data-provider'
+import { DesignmentTreeDataProvider } from './designment-tree-data-provider'
 import * as settings from '../settings/settings';
 import { WorkspaceManager } from '../operation-panel-view/workspace-manager';
 
@@ -38,13 +37,7 @@ const openChatGPTView = (context: vscode.ExtensionContext) => {
             const selected = event.selection[0];
 
             // Open the associated content file in the editor
-            let contentPath: string;
-            if (selected instanceof RequirementNode) {
-                // RequirementNode.absolutePath is the project directory — open content.txt from it
-                contentPath = path.join(selected.absolutePath, 'content.txt');
-            } else {
-                contentPath = selected.getContentFilePath();
-            }
+            const contentPath: string = selected.getContentFilePath();
 
             if (fs.existsSync(contentPath)) {
                 try {

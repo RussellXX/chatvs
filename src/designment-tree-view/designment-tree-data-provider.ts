@@ -55,16 +55,15 @@ export abstract class DesignmentTreeNode {
 
 export class ProjectNode extends DesignmentTreeNode {
 
-    public children: (ModuleNode | RequirementNode)[] = []
+    public children: (ModuleNode | RequirementNode)[]
 
     constructor(
         label: string,
         absolutePath: string,
+        children?: (ModuleNode | RequirementNode)[]
     ) {
-        super(label, absolutePath)
-        this.children.push(
-            new RequirementNode(absolutePath, this)
-        )
+        super(label, absolutePath);
+        this.children = children ?? [];
     }
 
     isExtendable(): boolean {
@@ -122,10 +121,10 @@ export class ModuleNode extends DesignmentTreeNode {
 
 export class RequirementNode extends DesignmentTreeNode {
     constructor(
-        absolutePath: string,
         parent: ProjectNode
     ) {
-        super(REQUIREMENT_NODE_LABEL, absolutePath, parent)
+        const absolutePath: string = path.join(parent.absolutePath, CONTENT_FILENAME);
+        super(REQUIREMENT_NODE_LABEL, absolutePath, parent);
     }
 
     isExtendable(): boolean {
@@ -144,7 +143,7 @@ export class RequirementNode extends DesignmentTreeNode {
         obj: persistenceTreeNode,
         parent: ProjectNode
     ): RequirementNode {
-        return new RequirementNode(obj.absolutePath, parent);
+        return new RequirementNode(parent);
     }
 }
 

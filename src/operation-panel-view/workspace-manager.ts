@@ -64,19 +64,11 @@ function readModuleDesc(absolutePath: string): string {
 
 // Deep-copy the project tree into a workspace-private copy so the DataProvider
 // is not mutated until the user explicitly confirms.
-function cloneTree(source: ProjectNode): ProjectNode {
-    const clone = ProjectNode.fromObject({
-        label: source.label,
-        absolutePath: source.absolutePath,
-        type: 'Project',
-        childrenCount: 0
-    });
-    clone.children = source.children.map(child => {
+function cloneTree(src: ProjectNode): ProjectNode {
+    const clone: ProjectNode = new ProjectNode(src.label, src.absolutePath);
+    clone.children = src.children.map(child => {
         if (child instanceof RequirementNode) {
-            return RequirementNode.fromObject(
-                { label: child.label, absolutePath: child.absolutePath, type: 'Requirement', childrenCount: 0 },
-                clone
-            );
+            return new RequirementNode(clone);
         }
         return cloneModuleNode(child as ModuleNode, clone);
     }) as (ModuleNode | RequirementNode)[];

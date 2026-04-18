@@ -2,7 +2,7 @@ import * as vscode from 'vscode'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as settings from '../settings/settings'
-import { DesignmentTreeDataProvider, ProjectNode } from './designment-tree-data-provider'
+import { DesignmentTreeDataProvider, ProjectNode, RequirementNode } from './designment-tree-data-provider'
 
 export async function createProject(label: string) {
 
@@ -31,6 +31,8 @@ export async function createProject(label: string) {
     }
 
     const newProjectNode = new ProjectNode(label, absolutePath);
+    const requirementNode = new RequirementNode(newProjectNode);
+    newProjectNode.children.push(requirementNode);
 
     dataProvider.localNodeTree.push(newProjectNode);
     dataProvider.refresh(undefined);
