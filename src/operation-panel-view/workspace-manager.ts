@@ -87,7 +87,6 @@ export class WorkspaceManager {
     private static _instance: WorkspaceManager | null = null;
 
     // active project
-    // private projectPath: string | null = null;
     private projectRoot: ProjectNode | null = null;
     private workspaceRoot: ProjectNode | null = null;
 
@@ -493,7 +492,7 @@ export class WorkspaceManager {
     ): Promise<void> {
         const projectPath = this.projectRoot!.absolutePath;
         const aiPath = settings.getPseudoPath();
-        const projectName = path.basename(projectPath);
+        const projectName = this.projectRoot!.label;
 
         const modulesPath = path.join(projectPath, 'modules.json');
         const ongoingPath = path.join(projectPath, 'ongoing_leaf_modules.json');

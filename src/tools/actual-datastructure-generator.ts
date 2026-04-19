@@ -4,7 +4,6 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as openaiHelper from '../openai/openai-helper';
 import { getSrcFileSuffix } from './lang-util';
-import * as settings from '../settings/settings';
 import { DesignmentTreeDataProvider } from '../designment-tree-view/designment-tree-data-provider';
 
 
