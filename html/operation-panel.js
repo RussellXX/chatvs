@@ -69,11 +69,12 @@
     };
 
     // ==========================================================
-    // 4. 树状图（D3）
+    // 4. 树状图（D3 + foreignObject 节点，支持文字换行与多行显示）
     // ==========================================================
     const TreeView = {
         container: null,
-        NODE_W: 160, NODE_H: 52, H_GAP: 40, V_GAP: 80, PADDING: 20,
+        // 节点尺寸：宽度固定，高度足以容纳标题 + 3 行描述
+        NODE_W: 180, NODE_H: 88, H_GAP: 32, V_GAP: 60, PADDING: 18,
 
         init(containerId) { this.container = document.getElementById(containerId); },
 
@@ -92,53 +93,65 @@
                 if (d.y > maxY) maxY = d.y;
             });
 
-            const width  = (maxX - minX) + this.NODE_W + this.PADDING * 2;
-            const height = maxY + this.NODE_H + this.PADDING * 2;
+            const svgW = (maxX - minX) + this.NODE_W + this.PADDING * 2;
+            const svgH = maxY + this.NODE_H + this.PADDING * 2;
+            const NW = this.NODE_W, NH = this.NODE_H;
 
-            const svg = d3.create('svg').attr('width', width).attr('height', height)
-                .attr('viewBox', [0, 0, width, height]);
+            const svg = d3.create('svg').attr('width', svgW).attr('height', svgH);
 
             const g = svg.append('g').attr('transform',
-                `translate(${this.PADDING - minX + this.NODE_W / 2}, ${this.PADDING})`);
+                `translate(${this.PADDING - minX + NW / 2}, ${this.PADDING})`);
 
-            g.append('g').attr('class', 'tree-links')
-                .selectAll('path').data(root.links()).join('path')
+            // 连接线
+            g.append('g').selectAll('path').data(root.links()).join('path')
                 .attr('class', 'tree-link')
                 .attr('d', d3.linkVertical()
-                    .source(l => ({ x: l.source.x, y: l.source.y + this.NODE_H }))
-                    .target(l => ({ x: l.target.x, y: l.target.y }))
-                    .x(d => d.x).y(d => d.y));
+                    .source(l => [l.source.x, l.source.y + NH])
+                    .target(l => [l.target.x, l.target.y])
+                    .x(d => d[0]).y(d => d[1]));
 
-            const nodeG = g.append('g').attr('class', 'tree-nodes')
-                .selectAll('g').data(root.descendants()).join('g')
+            // 节点组
+            const nodeG = g.append('g').selectAll('g').data(root.descendants()).join('g')
                 .attr('class', d => {
-                    const cls = ['tree-node', `node-${d.data.nodeType || 'non-leaf'}`];
-                    if (d.data.originalIndex === selectedIndex) cls.push('selected');
-                    return cls.join(' ');
+                    const parts = ['tree-node', `node-${d.data.nodeType || 'non-leaf'}`];
+                    if (d.data.originalIndex === selectedIndex) parts.push('selected');
+                    return parts.join(' ');
                 })
-                .attr('transform', d => `translate(${d.x - this.NODE_W / 2}, ${d.y})`)
+                .attr('transform', d => `translate(${d.x - NW / 2}, ${d.y})`)
                 .on('click', (event, d) => {
                     event.stopPropagation();
                     if (typeof onNodeClick === 'function') onNodeClick(d.data.originalIndex);
                 });
 
-            nodeG.append('rect').attr('width', this.NODE_W).attr('height', this.NODE_H);
-            nodeG.append('text').attr('class', 'node-title')
-                .attr('x', this.NODE_W / 2).attr('y', this.NODE_H / 2 - 8)
-                .attr('text-anchor', 'middle')
-                .text(d => this._ell(d.data.title, 22));
-            nodeG.append('text').attr('class', 'node-desc')
-                .attr('x', this.NODE_W / 2).attr('y', this.NODE_H / 2 + 10)
-                .attr('text-anchor', 'middle')
-                .text(d => this._ell(d.data.desc, 28));
-            nodeG.append('title').text(d => `${d.data.title}\n${d.data.desc}`);
+            // 背景矩形（圆角）
+            nodeG.append('rect').attr('width', NW).attr('height', NH).attr('rx', 5).attr('ry', 5);
+
+            // foreignObject：嵌入 HTML，实现自动换行与多行描述
+            nodeG.append('foreignObject').attr('width', NW).attr('height', NH)
+                .append('xhtml:div')
+                .attr('class', d => {
+                    const parts = ['node-inner', `node-inner-${d.data.nodeType || 'non-leaf'}`];
+                    if (d.data.originalIndex === selectedIndex) parts.push('node-inner-selected');
+                    return parts.join(' ');
+                })
+                .html(d => {
+                    const t = this._esc(d.data.title);
+                    const ds = this._esc(d.data.desc);
+                    return `<div class="node-title">${t}</div>` +
+                           (ds ? `<div class="node-desc">${ds}</div>` : '');
+                });
+
+            // 原生 tooltip：hover 时显示完整内容
+            nodeG.append('title').text(d =>
+                d.data.title + (d.data.desc ? '\n\n' + d.data.desc : '')
+            );
 
             this.container.appendChild(svg.node());
         },
 
-        _ell(text, max) {
-            if (!text) return '';
-            return text.length > max ? text.slice(0, max - 1) + '…' : text;
+        _esc(s) {
+            if (!s) return '';
+            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
     };
 

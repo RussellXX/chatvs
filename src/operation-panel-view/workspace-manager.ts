@@ -31,6 +31,9 @@ function appendCustomPrompt(userPrompt: string, customPrompt: string): string {
 }
 
 function writeJsonAtomically(filePath: string, data: unknown): void {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
     const tempPath = `${filePath}.tmp.${Date.now()}`;
     try {
         fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf8');
@@ -38,6 +41,84 @@ function writeJsonAtomically(filePath: string, data: unknown): void {
     } catch (err) {
         if (fs.existsSync(tempPath)) { try { fs.unlinkSync(tempPath); } catch (_) {} }
         throw err;
+    }
+}
+
+// ── draft overlay helpers ───────────────────────────────────────────────────
+// All draft operations mirror real paths under `<projectAbs>/.tmp/`, so that
+// division / refinement writes never corrupt the persisted project directory
+// until the user confirms.
+
+const DRAFT_DIR_NAME = '.tmp';
+
+// On Windows, VS Code's editor.document.fileName uses a lowercase drive letter
+// (e.g. "e:\...") while Node fs / path.resolve keeps whatever case was given.
+// path.relative() does a byte-level compare and breaks across that mismatch.
+// normPath() resolves to an absolute path and lowercases the whole string on
+// Windows so all comparisons are case-insensitive without touching stored values.
+function normPath(p: string): string {
+    const resolved = path.resolve(p);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function getDraftRoot(projectAbs: string): string {
+    return path.join(projectAbs, DRAFT_DIR_NAME);
+}
+
+function isDraftPath(projectAbs: string, p: string): boolean {
+    const rel = path.relative(normPath(getDraftRoot(projectAbs)), normPath(p));
+    return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+function toDraftPath(projectAbs: string, realPath: string): string {
+    // Compute relative portion via normalised paths, but reconstruct using the
+    // original-cased projectAbs so actual filesystem calls use correct casing.
+    const rel = path.relative(normPath(projectAbs), normPath(realPath));
+    return path.join(getDraftRoot(projectAbs), rel);
+}
+
+function toRealPath(projectAbs: string, draftPath: string): string {
+    const rel = path.relative(normPath(getDraftRoot(projectAbs)), normPath(draftPath));
+    return path.join(projectAbs, rel);
+}
+
+// Return the write target: mirror into `.tmp/` if it is currently a real path.
+function toDraftForWrite(projectAbs: string, p: string): string {
+    return isDraftPath(projectAbs, p) ? p : toDraftPath(projectAbs, p);
+}
+
+function cleanDraft(projectAbs: string): void {
+    const root = getDraftRoot(projectAbs);
+    if (fs.existsSync(root)) fs.rmSync(root, { recursive: true, force: true });
+}
+
+// Draft-first read: if a draft file exists, use it; otherwise fall back to real.
+function readJsonDraftFirst(projectAbs: string, realPath: string): any[] {
+    const draftPath = toDraftPath(projectAbs, realPath);
+    if (fs.existsSync(draftPath)) return readJsonSafe(draftPath);
+    return readJsonSafe(realPath);
+}
+
+// Merge draft overlay into the real project dir, then delete the overlay.
+// Files are rename()d onto existing targets; directories are merged recursively.
+function promoteDraft(projectAbs: string): void {
+    const root = getDraftRoot(projectAbs);
+    if (!fs.existsSync(root)) return;
+    mergeDir(root, projectAbs);
+    fs.rmSync(root, { recursive: true, force: true });
+}
+
+function mergeDir(src: string, dst: string): void {
+    if (!fs.existsSync(dst)) fs.mkdirSync(dst, { recursive: true });
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+        const s = path.join(src, entry.name);
+        const d = path.join(dst, entry.name);
+        if (entry.isDirectory()) {
+            mergeDir(s, d);
+        } else {
+            if (fs.existsSync(d)) fs.unlinkSync(d);
+            fs.renameSync(s, d);
+        }
     }
 }
 
@@ -56,9 +137,9 @@ function readModuleDesc(absolutePath: string): string {
         const text = fs.readFileSync(contentPath, 'utf8').trim();
         if (text.startsWith('{')) {
             const json = JSON.parse(text);
-            return ((json.description as string) || '').slice(0, 40);
+            return ((json.description as string) || '').slice(0, 200);
         }
-        return text.slice(0, 40);
+        return text.slice(0, 200);
     } catch { return ''; }
 }
 
@@ -122,6 +203,9 @@ export class WorkspaceManager {
     // ── public API ────────────────────────────────────────────────────────
 
     async loadProject(projectNode: ProjectNode): Promise<void> {
+        // Discard any stale draft overlay from a prior crashed / unconfirmed session.
+        cleanDraft(projectNode.absolutePath);
+
         this.projectRoot = projectNode;
         this.workspaceRoot = cloneTree(projectNode);
         this.currentModule = -1;
@@ -204,7 +288,9 @@ export class WorkspaceManager {
                 const userPrompt = appendCustomPrompt(prompt.user, customPrompt);
                 const raw = await openaiHelper.callOpenAIForJSON(prompt.system, userPrompt);
 
-                const outputPath = path.join(modulePath, `pseudo_${Date.now()}.txt`);
+                const outputRealPath = path.join(modulePath, `pseudo_${Date.now()}.txt`);
+                const outputPath = toDraftForWrite(this.projectRoot!.absolutePath, outputRealPath);
+                fs.mkdirSync(path.dirname(outputPath), { recursive: true });
                 fs.writeFileSync(outputPath, raw, 'utf8');
 
                 const pseudoCount = history.filter(e => e.type === 'pseudo').length;
@@ -238,12 +324,13 @@ export class WorkspaceManager {
             return;
         }
 
-        // 需要一个活动编辑器，且正在编辑当前模块最新条目的文件，且有非空选区
-        const editor = vscode.window.activeTextEditor;
-        const sameFile = editor
-            && path.resolve(editor.document.fileName) === path.resolve(lastEntry.filePath);
+        const targetPath = normPath(lastEntry.filePath);
+        const editor =
+            vscode.window.visibleTextEditors.find(
+                e => normPath(e.document.fileName) === targetPath
+            );
 
-        if (!editor || !sameFile) {
+        if (!editor) {
             vscode.window.showWarningMessage(
                 '局部精化前，请先在编辑器中打开当前模块最新的伪代码文件。'
             );
@@ -279,7 +366,9 @@ export class WorkspaceManager {
                 const raw = await openaiHelper.callOpenAIForJSON(prompt.system, userPrompt);
                 const refinedContent = cleanLLMResponse(raw);
 
-                const outputPath = path.join(modulePath, `pseudo_local_${Date.now()}.txt`);
+                const outputRealPath = path.join(modulePath, `pseudo_local_${Date.now()}.txt`);
+                const outputPath = toDraftForWrite(this.projectRoot!.absolutePath, outputRealPath);
+                fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
                 // 读取旧条目的确认状态侧挂文件（若存在）
                 const oldHumanPath = getHumanJsonPath(lastEntry.filePath);
@@ -407,7 +496,13 @@ export class WorkspaceManager {
                 }
 
                 const { writeModule } = await import('../tools/module-writer.js');
-                const moduleRelPath = path.relative(projectPath, modulePath);
+                // Generated code is a terminal artifact under `codes/<projectName>/`,
+                // so the relative path must reflect the logical module location
+                // even if the workspace node is still draft (`.tmp/...`).
+                const realModulePath = isDraftPath(projectPath, modulePath)
+                    ? toRealPath(projectPath, modulePath)
+                    : modulePath;
+                const moduleRelPath = path.relative(projectPath, realModulePath);
                 const generatedFilePath = await writeModule(codeProjectRoot, moduleRelPath, code, language);
 
                 if (topoIdx === this.leafOrder.length - 1) {
@@ -434,18 +529,60 @@ export class WorkspaceManager {
     async confirm(): Promise<void> {
         if (!this.projectRoot || !this.workspaceRoot) return;
 
-        // Flush workspace tree into DataProvider
-        this.projectRoot.children = this.workspaceRoot.children;
+        const projectAbs = this.projectRoot.absolutePath;
+
+        // 1. Promote the draft overlay to the real project directory.
+        try {
+            promoteDraft(projectAbs);
+        } catch (err) {
+            vscode.window.showErrorMessage(`草稿合并失败: ${err}`);
+            return;
+        }
+
+        // 2. Remap draft paths on in-memory state to their real equivalents.
+        this.remapTreeToReal(this.workspaceRoot, projectAbs);
+        for (const history of Object.values(this.refinementHistories)) {
+            for (const entry of history) {
+                if (isDraftPath(projectAbs, entry.filePath)) {
+                    entry.filePath = toRealPath(projectAbs, entry.filePath);
+                }
+            }
+        }
+
+        // 3. Deep-clone workspace children into projectRoot so the DataProvider
+        //    owns independent node instances (avoids shared-reference aliasing).
+        this.projectRoot.children = this.workspaceRoot.children.map(child => {
+            if (child instanceof RequirementNode) {
+                return new RequirementNode(this.projectRoot!);
+            }
+            return cloneModuleNode(child as ModuleNode, this.projectRoot!);
+        }) as (ModuleNode | RequirementNode)[];
         this.fixParentRefs(this.projectRoot);
 
-        // Persist each module's refinement history
+        // 4. Rebuild derived state against the remapped workspace tree so
+        //    indexToPath now contains real paths.
+        this.rebuildDerivedState();
+
+        // 5. Persist each module's refinement history into the real module dir.
         for (const [idxStr, history] of Object.entries(this.refinementHistories)) {
             const absPath = this.indexToPath.get(Number(idxStr));
             if (absPath) saveRefinementHistory(absPath, history);
         }
 
         DesignmentTreeDataProvider.getInstance().refresh(undefined);
+        this.postUpdate();
         vscode.window.showInformationMessage('工作区已保存。');
+    }
+
+    private remapTreeToReal(node: ProjectNode | ModuleNode, projectAbs: string): void {
+        for (const child of (node.children ?? [])) {
+            if (child instanceof ModuleNode) {
+                if (isDraftPath(projectAbs, child.absolutePath)) {
+                    child.absolutePath = toRealPath(projectAbs, child.absolutePath);
+                }
+                this.remapTreeToReal(child, projectAbs);
+            }
+        }
     }
 
     selectModule(nodeIndex: number): void {
@@ -491,14 +628,24 @@ export class WorkspaceManager {
         customPrompt = ''
     ): Promise<void> {
         const projectPath = this.projectRoot!.absolutePath;
-        const aiPath = settings.getPseudoPath();
+        const pseudoPath = settings.getPseudoPath();
         const projectName = this.projectRoot!.label;
 
-        const modulesPath = path.join(projectPath, 'modules.json');
-        const ongoingPath = path.join(projectPath, 'ongoing_leaf_modules.json');
+        // All disk writes during a division are draft-only — they live under
+        // `<projectPath>/.tmp/` until `confirm()` promotes them.
+        const modulesRealPath = path.join(projectPath, 'modules.json');
+        const ongoingRealPath = path.join(projectPath, 'ongoing_leaf_modules.json');
+        const modulesDraftPath = toDraftPath(projectPath, modulesRealPath);
+        const ongoingDraftPath = toDraftPath(projectPath, ongoingRealPath);
 
-        let allModules = readJsonSafe(modulesPath);
-        let ongoing = readJsonSafe(ongoingPath);
+        let allModules = readJsonDraftFirst(projectPath, modulesRealPath);
+        let ongoing = readJsonDraftFirst(projectPath, ongoingRealPath);
+
+        // Compute the real-project equivalent of `node.absolutePath` so that names
+        // and relative paths are stable even when the node itself is still draft.
+        const realNodePath = isDraftPath(projectPath, node.absolutePath)
+            ? toRealPath(projectPath, node.absolutePath)
+            : node.absolutePath;
 
         const isFirstLevel = node instanceof ProjectNode;
         let prompt: { system: string; user: string };
@@ -507,21 +654,32 @@ export class WorkspaceManager {
         if (isFirstLevel) {
             allModules = [];
             ongoing = [];
-            writeJsonAtomically(modulesPath, []);
-            writeJsonAtomically(ongoingPath, []);
+            writeJsonAtomically(modulesDraftPath, []);
+            writeJsonAtomically(ongoingDraftPath, []);
+
+            // Drop any previous module subtrees from the workspace view so the
+            // new division replaces them rather than piling up alongside.
+            node.children = node.children.filter(c => c instanceof RequirementNode);
+
             prompt = await openaiHelper.getModuleDivisionPrompt1(
                 node.getContentFilePath(), this.context
             );
         } else {
-            const relRaw = path.relative(aiPath, node.absolutePath);
+            const relRaw = path.relative(pseudoPath, realNodePath);
             const currentModuleName = relRaw.split(path.sep).join('.');
             const prefix = projectName + '.';
             const clean = currentModuleName.startsWith(prefix)
                 ? currentModuleName.slice(prefix.length)
                 : currentModuleName;
             expectedPrefix = clean + '.';
+
+            // Feed the draft-first ongoing list into the prompt so sub-division
+            // sees pending changes from the same session.
+            const ongoingForPrompt = fs.existsSync(ongoingDraftPath)
+                ? ongoingDraftPath
+                : ongoingRealPath;
             prompt = await openaiHelper.getModuleDivisionPrompt2(
-                ongoingPath,
+                ongoingForPrompt,
                 path.join(projectPath, 'content.txt'),
                 currentModuleName,
                 this.context
@@ -554,8 +712,8 @@ export class WorkspaceManager {
 
         // Update ongoing list: remove parent (non-first), propagate dependencies
         if (!isFirstLevel) {
-            const relPath = path.relative(aiPath, node.absolutePath);
-            const parentName = path.relative(path.join(aiPath, projectName), node.absolutePath)
+            const relPath = path.relative(pseudoPath, realNodePath);
+            const parentName = path.relative(projectPath, realNodePath)
                 .split(path.sep).join('.');
 
             ongoing = ongoing.filter((m: any) =>
@@ -575,27 +733,30 @@ export class WorkspaceManager {
             propagateDeps(allModules);
         }
 
-        // Create child module directories and add to workspace tree
+        // Create child module directories inside the draft overlay and attach
+        // the new ModuleNodes to the workspace tree with draft absolutePaths.
         for (const mod of result) {
             mod.path = path.join(projectName, mod.name.replace(/\./g, path.sep));
             allModules.push(mod);
             ongoing.push(mod);
 
             const childName: string = mod.name.split('.').pop()!;
-            const childPath = path.join(node.absolutePath, childName);
-            fs.mkdirSync(childPath, { recursive: true });
+            const childRealPath = path.join(realNodePath, childName);
+            const childDraftPath = toDraftPath(projectPath, childRealPath);
+
+            fs.mkdirSync(childDraftPath, { recursive: true });
             fs.writeFileSync(
-                path.join(childPath, 'content.txt'),
+                path.join(childDraftPath, 'content.txt'),
                 JSON.stringify(mod, null, 2),
                 'utf8'
             );
 
-            const childNode = new ModuleNode(childName, childPath, node);
+            const childNode = new ModuleNode(childName, childDraftPath, node);
             (node.children as any[]).push(childNode);
         }
 
-        writeJsonAtomically(modulesPath, allModules);
-        writeJsonAtomically(ongoingPath, ongoing);
+        writeJsonAtomically(modulesDraftPath, allModules);
+        writeJsonAtomically(ongoingDraftPath, ongoing);
     }
 
     private rebuildDerivedState(): void {
@@ -649,18 +810,29 @@ export class WorkspaceManager {
         this.pathToIndex = pathToIndex;
         this.leafModuleIndices = leafModuleIndices;
 
-        // Topological order from ongoing_leaf_modules.json
+        // Topological order from ongoing_leaf_modules.json (draft-first: an
+        // in-progress division will have written `.tmp/ongoing_leaf_modules.json`
+        // and the corresponding ModuleNodes carry draft absolutePaths, so we
+        // look up both draft and real path variants per entry).
         const aiPath = settings.getPseudoPath();
-        const ongoingPath = path.join(this.projectRoot!.absolutePath, 'ongoing_leaf_modules.json');
+        const projectAbs = this.projectRoot!.absolutePath;
+        const ongoingRealPath = path.join(projectAbs, 'ongoing_leaf_modules.json');
+        const ongoingDraftPath = toDraftPath(projectAbs, ongoingRealPath);
+        const ongoingPath = fs.existsSync(ongoingDraftPath) ? ongoingDraftPath : ongoingRealPath;
 
         if (fs.existsSync(ongoingPath)) {
             try {
                 const raw = JSON.parse(fs.readFileSync(ongoingPath, 'utf8'));
                 const sorted = topoSortLeafModules(raw);
                 this.leafOrder = sorted
-                    .map((m: any) => pathToIndex.get(path.join(aiPath, m.path)) ?? -1)
+                    .map((m: any) => {
+                        const realP = path.join(aiPath, m.path);
+                        const draftP = toDraftPath(projectAbs, realP);
+                        return pathToIndex.get(draftP) ?? pathToIndex.get(realP) ?? -1;
+                    })
                     .filter(i => i >= 0);
-            } catch {
+            } catch (err) {
+                console.warn('[WorkspaceManager] 叶子拓扑排序失败，回退为树前序：', err);
                 this.leafOrder = [...leafModuleIndices];
             }
         } else {

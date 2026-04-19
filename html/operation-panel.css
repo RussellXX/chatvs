@@ -1,13 +1,16 @@
 /* ─── CSS variables ─────────────────────────────────────────────────────── */
 :root {
-    --node-root-bg: var(--vscode-editorInfo-foreground, #3794ff);
-    --node-nonleaf-bg: var(--vscode-editorWidget-background, #252526);
-    --node-leaf-bg: var(--vscode-editorHoverWidget-background, #2d2d30);
+    --node-root-bg:      var(--vscode-editorInfo-foreground, #3794ff);
+    --node-nonleaf-bg:   var(--vscode-editorWidget-background, #252526);
+    --node-leaf-bg:      var(--vscode-editorHoverWidget-background, #2d2d30);
     --node-selected-outline: var(--vscode-focusBorder, #007acc);
-    --node-border: var(--vscode-panel-border, #454545);
-    --link-color: var(--vscode-editorLineNumber-foreground, #858585);
-    --text-color: var(--vscode-foreground, #cccccc);
-    --title-color: var(--vscode-descriptionForeground, #9d9d9d);
+    --node-border:       var(--vscode-panel-border, #454545);
+    --link-color:        var(--vscode-editorLineNumber-foreground, #858585);
+    --text-color:        var(--vscode-foreground, #cccccc);
+    --title-color:       var(--vscode-descriptionForeground, #9d9d9d);
+    --hover-bg:          var(--vscode-list-hoverBackground, rgba(255,255,255,0.06));
+    --active-bg:         var(--vscode-list-activeSelectionBackground, #094771);
+    --active-fg:         var(--vscode-list-activeSelectionForeground, #ffffff);
 }
 
 body {
@@ -23,21 +26,31 @@ body {
     overflow: hidden;
 }
 
-/* Body-level sections sit in a scrollable column, btn-bar sticks to bottom */
-.section-title {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--title-color);
-    padding: 4px 12px 2px;
-    flex-shrink: 0;
+/* 可滚动内容区：撑满 body 剩余空间，btn-bar 始终在底部 */
+.scroll-area {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: 4px;
 }
 
-/* ─── Tree ──────────────────────────────────────────────────────────────── */
+.section-title {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--title-color);
+    padding: 6px 12px 2px;
+    flex-shrink: 0;
+    user-select: none;
+}
+
+/* ─── Tree (D3 SVG + foreignObject nodes) ───────────────────────────────── */
 .tree-root {
-    flex: 0 0 300px;
-    min-height: 160px;
+    flex: 0 0 auto;
+    max-height: 320px;
+    min-height: 64px;
     overflow: auto;
     border: 1px solid var(--node-border);
     border-radius: 4px;
@@ -45,129 +58,140 @@ body {
     margin: 0 12px 6px;
 }
 
-.tree-root svg {
-    display: block;
-}
+.tree-root svg { display: block; }
 
-/* 节点外层 */
-.tree-node {
-    cursor: pointer;
-}
-
+/* SVG rect */
 .tree-node rect {
     stroke: var(--node-border);
     stroke-width: 1px;
-    rx: 4;
-    ry: 4;
-    transition: stroke 0.15s, stroke-width 0.15s;
+    transition: stroke 0.13s, stroke-width 0.13s;
 }
 
-.tree-node.node-root rect {
-    fill: var(--node-root-bg);
-}
-
-.tree-node.node-non-leaf rect {
-    fill: var(--node-nonleaf-bg);
-}
-
-.tree-node.node-leaf rect {
-    fill: var(--node-leaf-bg);
-}
+.tree-node.node-root     rect { fill: var(--node-root-bg); }
+.tree-node.node-non-leaf rect { fill: var(--node-nonleaf-bg); }
+.tree-node.node-leaf     rect { fill: var(--node-leaf-bg); }
 
 .tree-node.selected rect {
     stroke: var(--node-selected-outline);
-    stroke-width: 2.5px;
+    stroke-width: 2px;
 }
 
-.tree-node .node-title {
-    font-size: 12px;
-    font-weight: 600;
-    fill: var(--text-color);
-    dominant-baseline: middle;
-}
+.tree-node { cursor: pointer; }
 
-.tree-node.node-root .node-title {
-    fill: #fff;
-}
-
-.tree-node .node-desc {
-    font-size: 10px;
-    fill: var(--title-color);
-    dominant-baseline: middle;
-}
-
-.tree-node.node-root .node-desc {
-    fill: rgba(255, 255, 255, 0.85);
-}
-
-/* 连接线 */
+/* Connecting lines */
 .tree-link {
     fill: none;
     stroke: var(--link-color);
     stroke-width: 1.2px;
-    opacity: 0.7;
+    opacity: 0.65;
 }
 
-/* ─── Leaf topology ──────────────────────────────────────────────────────── */
+/* ── foreignObject inner HTML ── */
+/* This div lives inside <foreignObject> so it can use CSS text wrapping.   */
+.node-inner {
+    width: 100%;
+    height: 100%;
+    padding: 6px 8px 5px;
+    box-sizing: border-box;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    font-family: var(--vscode-font-family, sans-serif);
+}
+
+.node-inner .node-title {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text-color);
+    line-height: 1.35;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    margin-bottom: 3px;
+    flex-shrink: 0;
+}
+
+.node-inner .node-desc {
+    font-size: 10px;
+    color: var(--title-color);
+    line-height: 1.35;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+/* Root node: white text */
+.node-inner-root .node-title { color: #ffffff; }
+.node-inner-root .node-desc  { color: rgba(255,255,255,0.80); }
+
+/* Selected state overrides */
+.node-inner-selected .node-title,
+.node-inner-selected .node-desc { color: #ffffff; }
+
+/* ─── Leaf topology chips ────────────────────────────────────────────────── */
 .leaf-order-root {
     flex: 0 0 auto;
-    max-height: 100px;
+    max-height: 92px;
     overflow: auto;
     border: 1px solid var(--node-border);
     border-radius: 4px;
-    padding: 6px;
+    padding: 5px 8px;
     margin: 0 12px 6px;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
 }
 
 .leaf-chip {
     display: inline-flex;
     align-items: center;
-    padding: 4px 10px;
+    padding: 3px 8px;
     border: 1px solid var(--node-border);
-    border-radius: 12px;
+    border-radius: 10px;
     background: var(--node-leaf-bg);
     color: var(--text-color);
-    font-size: 12px;
+    font-size: 11px;
     cursor: pointer;
     user-select: none;
-    transition: border 0.15s;
+    white-space: nowrap;
+    transition: border-color 0.12s;
 }
 
-.leaf-chip:hover {
-    border-color: var(--node-selected-outline);
-}
+.leaf-chip:hover { border-color: var(--node-selected-outline); }
 
 .leaf-chip.selected {
     border: 2px solid var(--node-selected-outline);
-    padding: 3px 9px; /* 补偿 border 增加的宽度 */
+    padding: 2px 7px;
 }
 
 .leaf-chip .chip-index {
     color: var(--title-color);
-    margin-right: 6px;
+    margin-right: 4px;
     font-weight: 600;
+    font-size: 10px;
 }
 
 .leaf-arrow {
     color: var(--title-color);
-    font-size: 12px;
+    font-size: 11px;
     user-select: none;
 }
 
 /* ─── Refinement history ─────────────────────────────────────────────────── */
 .refinement-history-root {
     flex: 0 0 auto;
-    min-height: 48px;
-    max-height: 120px;
+    min-height: 42px;
+    max-height: 96px;
     overflow-x: auto;
     overflow-y: hidden;
     border: 1px solid var(--node-border);
     border-radius: 4px;
-    padding: 8px 10px;
+    padding: 6px 8px;
     margin: 0 12px 6px;
     display: flex;
     flex-wrap: nowrap;
@@ -177,10 +201,10 @@ body {
 
 .hint-text {
     color: var(--title-color);
-    font-size: 12px;
+    font-size: 11.5px;
+    font-style: italic;
 }
 
-/* Single refinement step block */
 .refine-block {
     display: inline-flex;
     flex-direction: column;
@@ -189,32 +213,32 @@ body {
 }
 
 .refine-chip {
-    padding: 6px 14px;
+    padding: 4px 12px;
     border: 1px solid var(--node-border);
     border-radius: 4px;
     background: var(--node-leaf-bg);
     color: var(--text-color);
-    font-size: 12px;
+    font-size: 11.5px;
     cursor: pointer;
     user-select: none;
     white-space: nowrap;
-    transition: border-color 0.15s;
+    transition: border-color 0.12s;
 }
 
 .refine-chip:hover { border-color: var(--node-selected-outline); }
 
 .refine-chip.selected {
     border: 2px solid var(--node-selected-outline);
-    padding: 5px 13px;
+    padding: 3px 11px;
 }
 
-.refine-chip.chip-spec  { background: var(--node-nonleaf-bg); }
-.refine-chip.chip-code  { background: var(--node-root-bg); color: #fff; }
+.refine-chip.chip-spec { background: var(--node-nonleaf-bg); }
+.refine-chip.chip-code { background: var(--node-root-bg); color: #fff; }
 
 .refine-arrow {
     color: var(--title-color);
-    font-size: 14px;
-    padding: 0 6px;
+    font-size: 13px;
+    padding: 0 5px;
     user-select: none;
     align-self: center;
     flex-shrink: 0;
@@ -224,24 +248,22 @@ body {
 .prompt-input {
     flex: 0 0 auto;
     margin: 0 12px 6px;
-    padding: 6px 8px;
+    padding: 5px 7px;
     border: 1px solid var(--node-border);
     border-radius: 4px;
     background: var(--vscode-input-background, var(--node-leaf-bg));
     color: var(--vscode-input-foreground, var(--text-color));
     font-family: var(--vscode-font-family);
-    font-size: 12px;
+    font-size: 11.5px;
     line-height: 1.4;
     resize: vertical;
-    min-height: 36px;
-    max-height: 120px;
+    min-height: 34px;
+    max-height: 110px;
     box-sizing: border-box;
+    width: calc(100% - 24px);
 }
 
-.prompt-input::placeholder {
-    color: var(--title-color);
-    opacity: 0.7;
-}
+.prompt-input::placeholder { color: var(--title-color); opacity: 0.7; }
 
 .prompt-input:focus {
     outline: 1px solid var(--node-selected-outline);
@@ -249,34 +271,33 @@ body {
     border-color: var(--node-selected-outline);
 }
 
-.prompt-input:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
+.prompt-input:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ─── Button bar ─────────────────────────────────────────────────────────── */
 .btn-bar {
     flex-shrink: 0;
     display: flex;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: 6px;
+    padding: 6px 12px 8px;
     border-top: 1px solid var(--node-border);
-    background: var(--vscode-sideBar-background, transparent);
+    background: var(--vscode-editor-background);
 }
 
 .action-btn {
     flex: 1;
-    padding: 6px 10px;
+    padding: 4px 8px;
     border: none;
     border-radius: 3px;
-    background: var(--vscode-button-background);
-    color: var(--vscode-button-foreground);
+    background: var(--vscode-button-background, #0e639c);
+    color: var(--vscode-button-foreground, #fff);
     cursor: pointer;
-    font-size: 12px;
+    font-size: 11px;
+    font-family: var(--vscode-font-family);
+    transition: background 0.12s, opacity 0.12s;
 }
 
-.action-btn:hover  { background: var(--vscode-button-hoverBackground); }
-.action-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.action-btn:hover  { background: var(--vscode-button-hoverBackground, #1177bb); }
+.action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Split button group (精化 + ▾) */
 .split-btn-group {
@@ -287,10 +308,10 @@ body {
 
 .split-btn-group .refine-btn { flex: 1; border-radius: 3px 0 0 3px; }
 .split-btn-group .refine-arrow-btn {
-    flex: 0 0 24px;
-    padding: 6px 4px;
+    flex: 0 0 20px;
+    padding: 4px 3px;
     border-radius: 0 3px 3px 0;
-    border-left: 1px solid rgba(255,255,255,0.2);
+    border-left: 1px solid rgba(255,255,255,0.25);
 }
 
 .dropdown-menu {
@@ -298,18 +319,19 @@ body {
     bottom: calc(100% + 4px);
     left: 0;
     right: 0;
-    background: var(--vscode-menu-background, #252526);
+    background: var(--vscode-menu-background, #2d2d30);
     border: 1px solid var(--node-border);
-    border-radius: 3px;
+    border-radius: 4px;
     z-index: 100;
     overflow: hidden;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.45);
 }
 
 .dropdown-menu.hidden { display: none; }
 
 .dropdown-item {
-    padding: 7px 12px;
-    font-size: 12px;
+    padding: 6px 12px;
+    font-size: 11.5px;
     color: var(--vscode-menu-foreground, #ccc);
     cursor: pointer;
 }
@@ -319,5 +341,9 @@ body {
     color: var(--vscode-menu-selectionForeground, #fff);
 }
 
-.confirm-btn { background: var(--vscode-button-secondaryBackground, #3a3d41); }
+.confirm-btn {
+    background: var(--vscode-button-secondaryBackground, #3a3d41);
+    color: var(--vscode-button-secondaryForeground, var(--text-color));
+}
+
 .confirm-btn:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
