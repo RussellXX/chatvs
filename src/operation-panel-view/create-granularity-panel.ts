@@ -1,5 +1,6 @@
 import * as vscode from 'vscode'
 import { OperationPanelViewProvider } from './operation-panel-view-provider'
+import { DesignTreeViewProvider } from './design-tree-view-provider'
 
 // export let currentRecord: GranularityRecord | null = null
 
@@ -17,9 +18,11 @@ export const refinementDiagnostics = vscode.languages.createDiagnosticCollection
 export function registerWebviewForGranularityPanel(context: vscode.ExtensionContext) {
 
     const provider = new OperationPanelViewProvider(context.extensionUri)
+    const treeProvider = new DesignTreeViewProvider(context.extensionUri)
 
     context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider('OperationPanelView', provider)
+        vscode.window.registerWebviewViewProvider('OperationPanelView', provider),
+        vscode.window.registerWebviewViewProvider('DesignTreeView', treeProvider)
     )
 
     context.subscriptions.push(refinementDiagnostics);

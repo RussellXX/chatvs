@@ -1,0 +1,102 @@
+/* ─── CSS variables ─────────────────────────────────────────────────────── */
+:root {
+    --node-root-bg:      var(--vscode-editorInfo-foreground, #3794ff);
+    --node-nonleaf-bg:   var(--vscode-editorWidget-background, #252526);
+    --node-leaf-bg:      var(--vscode-editorHoverWidget-background, #2d2d30);
+    --node-selected-outline: var(--vscode-focusBorder, #007acc);
+    --node-border:       var(--vscode-panel-border, #454545);
+    --link-color:        var(--vscode-editorLineNumber-foreground, #858585);
+    --text-color:        var(--vscode-foreground, #cccccc);
+    --title-color:       var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    color: var(--text-color);
+    background: var(--vscode-editor-background);
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* ─── Tree container ─────────────────────────────────────────────────────── */
+.tree-root {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background: var(--vscode-editor-background);
+    box-sizing: border-box;
+}
+
+.tree-root svg { display: block; }
+
+/* ─── SVG nodes ──────────────────────────────────────────────────────────── */
+.tree-node rect {
+    stroke: var(--node-border);
+    stroke-width: 1px;
+    transition: stroke 0.13s, stroke-width 0.13s;
+}
+
+.tree-node.node-root     rect { fill: var(--node-root-bg); }
+.tree-node.node-non-leaf rect { fill: var(--node-nonleaf-bg); }
+.tree-node.node-leaf     rect { fill: var(--node-leaf-bg); }
+
+.tree-node.selected rect {
+    stroke: var(--node-selected-outline);
+    stroke-width: 2px;
+}
+
+.tree-node { cursor: pointer; }
+
+/* ─── Connecting lines ───────────────────────────────────────────────────── */
+.tree-link {
+    fill: none;
+    stroke: var(--link-color);
+    stroke-width: 1.2px;
+    opacity: 0.65;
+}
+
+/* ─── foreignObject inner HTML ───────────────────────────────────────────── */
+.node-inner {
+    width: 100%;
+    height: 100%;
+    padding: 6px 8px 5px;
+    box-sizing: border-box;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    font-family: var(--vscode-font-family, sans-serif);
+}
+
+.node-inner .node-title {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--text-color);
+    line-height: 1.35;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    margin-bottom: 3px;
+    flex-shrink: 0;
+}
+
+.node-inner .node-desc {
+    font-size: 10px;
+    color: var(--title-color);
+    line-height: 1.35;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+.node-inner-root .node-title { color: #ffffff; }
+.node-inner-root .node-desc  { color: rgba(255,255,255,0.80); }
+
+.node-inner-selected .node-title,
+.node-inner-selected .node-desc { color: #ffffff; }

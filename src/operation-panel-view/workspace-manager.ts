@@ -13,6 +13,7 @@ import {
     DesignmentTreeNode
 } from '../designment-tree-view/designment-tree-data-provider';
 import { OperationPanelViewProvider } from './operation-panel-view-provider';
+import { DesignTreeViewProvider } from './design-tree-view-provider';
 import {
     NodeType,
     TreeNodeData,
@@ -909,10 +910,9 @@ export class WorkspaceManager {
     }
 
     private postUpdate(): void {
-        OperationPanelViewProvider.postMessage({
-            type: 'updateView',
-            data: this.buildPayload()
-        });
+        const payload = this.buildPayload();
+        OperationPanelViewProvider.postMessage({ type: 'updateView', data: payload });
+        DesignTreeViewProvider.postMessage({ type: 'updateView', data: payload });
     }
 
     private buildPayload(): UpdateViewPayload {

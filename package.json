@@ -162,8 +162,14 @@
       "RefinementContainer": [
         {
           "type": "webview",
+          "id": "DesignTreeView",
+          "name": "设计树",
+          "visibility": "visible"
+        },
+        {
+          "type": "webview",
           "id": "OperationPanelView",
-          "name": "Operation panel",
+          "name": "操作面板",
           "visibility": "visible"
         }
       ]

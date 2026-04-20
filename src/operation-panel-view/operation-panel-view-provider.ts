@@ -88,17 +88,14 @@ export class OperationPanelViewProvider implements vscode.WebviewViewProvider {
         const stylePath = vscode.Uri.joinPath(this._extensionUri, 'html', 'operation-panel.css');
         const htmlPath = vscode.Uri.joinPath(this._extensionUri, 'html', 'operation-panel.html');
         const scriptPath = vscode.Uri.joinPath(this._extensionUri, 'html', 'operation-panel.js');
-        const d3Path = vscode.Uri.joinPath(this._extensionUri, 'html', 'd3.v7.min.js');
 
         const styleUri = webview.asWebviewUri(stylePath).toString();
         const scriptUri = webview.asWebviewUri(scriptPath).toString();
-        const d3Uri = webview.asWebviewUri(d3Path).toString();
 
         let html = fs.readFileSync(htmlPath.fsPath, 'utf8')
         html = html
             .replace(/{{styleUri}}/g, styleUri)
-            .replace(/{{scriptUri}}/g, scriptUri)
-            .replace(/{{d3Uri}}/g, d3Uri);
+            .replace(/{{scriptUri}}/g, scriptUri);
 
         return html;
     }
