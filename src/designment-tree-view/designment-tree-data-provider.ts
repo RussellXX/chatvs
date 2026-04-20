@@ -49,7 +49,11 @@ export abstract class DesignmentTreeNode {
         obj: persistenceTreeNode,
         parent?: ProjectNode | ModuleNode
     ): DesignmentTreeNode {
-        throw new Error('DesignmentTreeNode subclass must implement static fromObject.')
+        throw new Error('DesignmentTreeNode subclass must implement static method fromObject.')
+    }
+
+    getPrefix(): string {
+        throw new Error('DesignmentTreeNode subclass does not implement getPrefix method.')
     }
 }
 
@@ -82,6 +86,10 @@ export class ProjectNode extends DesignmentTreeNode {
         const node = new ProjectNode(obj.label, obj.absolutePath);
         node.children = [];
         return node;
+    }
+
+    getPrefix(): string {
+        return '';
     }
 }
 
@@ -116,6 +124,11 @@ export class ModuleNode extends DesignmentTreeNode {
         parent: ProjectNode | ModuleNode
     ): ModuleNode {
         return new ModuleNode(obj.label, obj.absolutePath, parent);
+    }
+
+    getPrefix(): string {
+        if (this.parent instanceof ProjectNode) return this.label;
+        return this.parent!.getPrefix() + '.' + this.label;
     }
 }
 

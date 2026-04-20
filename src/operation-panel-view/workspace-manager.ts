@@ -14,6 +14,7 @@ import {
 } from '../designment-tree-view/designment-tree-data-provider';
 import { OperationPanelViewProvider } from './operation-panel-view-provider';
 import {
+    NodeType,
     TreeNodeData,
     RefinementEntry,
     UpdateViewPayload
@@ -65,6 +66,8 @@ function getDraftRoot(projectAbs: string): string {
     return path.join(projectAbs, DRAFT_DIR_NAME);
 }
 
+
+// Checked
 function isDraftPath(projectAbs: string, p: string): boolean {
     const rel = path.relative(normPath(getDraftRoot(projectAbs)), normPath(p));
     return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
@@ -73,12 +76,12 @@ function isDraftPath(projectAbs: string, p: string): boolean {
 function toDraftPath(projectAbs: string, realPath: string): string {
     // Compute relative portion via normalised paths, but reconstruct using the
     // original-cased projectAbs so actual filesystem calls use correct casing.
-    const rel = path.relative(normPath(projectAbs), normPath(realPath));
+    const rel = path.relative(projectAbs, realPath);
     return path.join(getDraftRoot(projectAbs), rel);
 }
 
 function toRealPath(projectAbs: string, draftPath: string): string {
-    const rel = path.relative(normPath(getDraftRoot(projectAbs)), normPath(draftPath));
+    const rel = path.relative(getDraftRoot(projectAbs), draftPath);
     return path.join(projectAbs, rel);
 }
 
@@ -132,15 +135,16 @@ function readJsonSafe(filePath: string): any[] {
 
 function readModuleDesc(absolutePath: string): string {
     const contentPath = path.join(absolutePath, 'content.txt');
-    if (!fs.existsSync(contentPath)) return '';
+    if (!fs.existsSync(contentPath)) {
+        throw new Error(`Module content file does not exist: ${contentPath}.`);
+    }
+    const text = fs.readFileSync(contentPath, 'utf8').trim();
     try {
-        const text = fs.readFileSync(contentPath, 'utf8').trim();
-        if (text.startsWith('{')) {
-            const json = JSON.parse(text);
-            return ((json.description as string) || '').slice(0, 200);
-        }
+        const json = JSON.parse(text);
+        return ((json.description as string) || '').slice(0, 200);
+    } catch {
         return text.slice(0, 200);
-    } catch { return ''; }
+    }
 }
 
 // Deep-copy the project tree into a workspace-private copy so the DataProvider
@@ -202,6 +206,7 @@ export class WorkspaceManager {
 
     // ── public API ────────────────────────────────────────────────────────
 
+    // Checked
     async loadProject(projectNode: ProjectNode): Promise<void> {
         // Discard any stale draft overlay from a prior crashed / unconfirmed session.
         cleanDraft(projectNode.absolutePath);
@@ -585,6 +590,7 @@ export class WorkspaceManager {
         }
     }
 
+    // Checked
     selectModule(nodeIndex: number): void {
         this.currentModule = nodeIndex;
         this.currentRefinementEntry = -1;
@@ -629,7 +635,6 @@ export class WorkspaceManager {
     ): Promise<void> {
         const projectPath = this.projectRoot!.absolutePath;
         const pseudoPath = settings.getPseudoPath();
-        const projectName = this.projectRoot!.label;
 
         // All disk writes during a division are draft-only — they live under
         // `<projectPath>/.tmp/` until `confirm()` promotes them.
@@ -647,9 +652,9 @@ export class WorkspaceManager {
             ? toRealPath(projectPath, node.absolutePath)
             : node.absolutePath;
 
-        const isFirstLevel = node instanceof ProjectNode;
+        const isFirstLevel: boolean = node instanceof ProjectNode;
         let prompt: { system: string; user: string };
-        let expectedPrefix = '';
+        let expectedPrefix: string = '';
 
         if (isFirstLevel) {
             allModules = [];
@@ -665,13 +670,8 @@ export class WorkspaceManager {
                 node.getContentFilePath(), this.context
             );
         } else {
-            const relRaw = path.relative(pseudoPath, realNodePath);
-            const currentModuleName = relRaw.split(path.sep).join('.');
-            const prefix = projectName + '.';
-            const clean = currentModuleName.startsWith(prefix)
-                ? currentModuleName.slice(prefix.length)
-                : currentModuleName;
-            expectedPrefix = clean + '.';
+            const currentModuleName: string = node.getPrefix();
+            expectedPrefix = currentModuleName + '.';
 
             // Feed the draft-first ongoing list into the prompt so sub-division
             // sees pending changes from the same session.
@@ -691,7 +691,7 @@ export class WorkspaceManager {
         let userPrompt = appendCustomPrompt(prompt.user, customPrompt);
         let valid = false;
 
-        for (let attempt = 0; attempt < 3 && !valid; attempt++) {
+        for (let attempt = 0; attempt < 5 && !valid; attempt++) {
             try {
                 const raw = await openaiHelper.callOpenAIForJSON(
                     prompt.system, userPrompt, ModulesArraySchema, 3
@@ -736,7 +736,7 @@ export class WorkspaceManager {
         // Create child module directories inside the draft overlay and attach
         // the new ModuleNodes to the workspace tree with draft absolutePaths.
         for (const mod of result) {
-            mod.path = path.join(projectName, mod.name.replace(/\./g, path.sep));
+            mod.path = path.join(this.projectRoot!.label, mod.name.replace(/\./g, path.sep));
             allModules.push(mod);
             ongoing.push(mod);
 
@@ -759,6 +759,7 @@ export class WorkspaceManager {
         writeJsonAtomically(ongoingDraftPath, ongoing);
     }
 
+    // Checked
     private rebuildDerivedState(): void {
         if (!this.workspaceRoot) {
             this.nodes = [];
@@ -781,7 +782,7 @@ export class WorkspaceManager {
             indexToPath.set(idx, node.absolutePath);
             pathToIndex.set(node.absolutePath, idx);
 
-            let nodeType: 'root' | 'leaf' | 'non-leaf';
+            let nodeType: NodeType;
             let moduleChildren: DesignmentTreeNode[];
 
             if (node instanceof ProjectNode) {
@@ -814,7 +815,7 @@ export class WorkspaceManager {
         // in-progress division will have written `.tmp/ongoing_leaf_modules.json`
         // and the corresponding ModuleNodes carry draft absolutePaths, so we
         // look up both draft and real path variants per entry).
-        const aiPath = settings.getPseudoPath();
+        const pseudoPath = settings.getPseudoPath();
         const projectAbs = this.projectRoot!.absolutePath;
         const ongoingRealPath = path.join(projectAbs, 'ongoing_leaf_modules.json');
         const ongoingDraftPath = toDraftPath(projectAbs, ongoingRealPath);
@@ -826,7 +827,7 @@ export class WorkspaceManager {
                 const sorted = topoSortLeafModules(raw);
                 this.leafOrder = sorted
                     .map((m: any) => {
-                        const realP = path.join(aiPath, m.path);
+                        const realP = path.join(pseudoPath, m.path);
                         const draftP = toDraftPath(projectAbs, realP);
                         return pathToIndex.get(draftP) ?? pathToIndex.get(realP) ?? -1;
                     })
