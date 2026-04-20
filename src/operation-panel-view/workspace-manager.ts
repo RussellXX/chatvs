@@ -184,6 +184,7 @@ export class WorkspaceManager {
     private currentRefinementEntry = -1;
     private refinementHistories: Record<number, RefinementEntry[]> = {};
     private isBusy = false;
+    private _suppressHistoryPaths: Set<string> = new Set();
 
     // index <-> path mapping (rebuilt from workspace tree each time)
     private indexToPath = new Map<number, string>();
@@ -236,6 +237,23 @@ export class WorkspaceManager {
         if (node instanceof ModuleNode && !node.isLeaf()) {
             vscode.window.showWarningMessage('只能拆分叶子模块节点。');
             return;
+        }
+
+        const hasRefinementHistory = Object.values(this.refinementHistories).some(
+            h => h.some(e => e.type === 'pseudo' || e.type === 'code')
+        );
+        if (hasRefinementHistory) {
+            const answer = await vscode.window.showWarningMessage(
+                '检测到当前工作区已有精化历史，拆分操作会导致精化历史被清除，是否继续？',
+                { modal: true }, '继续'
+            );
+            if (answer !== '继续') return;
+            this._suppressHistoryPaths = new Set(
+                Object.keys(this.refinementHistories)
+                    .map(ni => this.indexToPath.get(Number(ni)))
+                    .filter((p): p is string => !!p)
+            );
+            this.refinementHistories = {};
         }
 
         this.isBusy = true;
@@ -850,6 +868,8 @@ export class WorkspaceManager {
             if (this.refinementHistories[ni]) {
                 // Preserve in-memory history (accumulated this session)
                 next[ni] = this.refinementHistories[ni];
+            } else if (this._suppressHistoryPaths.has(absPath)) {
+                next[ni] = [];
             } else {
                 const stored = loadRefinementHistory(absPath);
                 if (stored && stored.length > 0) {
@@ -863,6 +883,7 @@ export class WorkspaceManager {
             }
         }
         this.refinementHistories = next;
+        this._suppressHistoryPaths.clear();
     }
 
     private canOperate(nodeIndex: number): boolean {
