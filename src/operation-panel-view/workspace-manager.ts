@@ -233,7 +233,15 @@ export class WorkspaceManager {
         const node = this.findNode(this.workspaceRoot, targetPath);
         if (!node) return;
 
-        // Only ProjectNode or a leaf ModuleNode can be divided
+        // ProjectNode: only allowed before any modules exist
+        if (node instanceof ProjectNode) {
+            const hasModules = node.children.some(c => c instanceof ModuleNode);
+            if (hasModules) {
+                vscode.window.showWarningMessage('项目已完成初始划分，只能对叶子模块进行拆分。');
+                return;
+            }
+        }
+        // ModuleNode: only leaf nodes can be divided
         if (node instanceof ModuleNode && !node.isLeaf()) {
             vscode.window.showWarningMessage('只能拆分叶子模块节点。');
             return;
@@ -869,7 +877,10 @@ export class WorkspaceManager {
                 // Preserve in-memory history (accumulated this session)
                 next[ni] = this.refinementHistories[ni];
             } else if (this._suppressHistoryPaths.has(absPath)) {
-                next[ni] = [];
+                const specPath = path.join(absPath, 'content.txt');
+                next[ni] = fs.existsSync(specPath)
+                    ? [{ label: '模块规约', filePath: specPath, type: 'spec' }]
+                    : [];
             } else {
                 const stored = loadRefinementHistory(absPath);
                 if (stored && stored.length > 0) {

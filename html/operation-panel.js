@@ -271,8 +271,9 @@
                 const nodeData  = mi >= 0 ? State.nodes[mi] : null;
                 const isLeafModule = nodeData && nodeData.nodeType === 'leaf'
                     && State.leafOrder.includes(mi);
-                const isRoot = nodeData && nodeData.nodeType === 'root';
-                this.divideBtn.disabled = !(isLeafModule || isRoot);
+                const isUndividedRoot = nodeData && nodeData.nodeType === 'root'
+                    && State.leafOrder.length === 0;
+                this.divideBtn.disabled = !(isLeafModule || isUndividedRoot);
 
                 // 精化 / 代码生成：只对当前可操作的叶子模块有效
                 const history = mi >= 0 ? State.refinementHistories[mi] : null;
