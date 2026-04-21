@@ -260,11 +260,13 @@ body {
 }
 
 .confirm-btn {
-    background: var(--vscode-button-secondaryBackground, #3a3d41);
-    color: var(--vscode-button-secondaryForeground, var(--text-color));
+    max-width: 88px;
+    white-space: nowrap;
+    background: #555558;
+    color: #e0e0e0;
 }
 
-.confirm-btn:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
+.confirm-btn:hover { background: #636366; }
 
 .show-tree-btn {
     flex: 0 0 auto;
