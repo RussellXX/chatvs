@@ -2,8 +2,6 @@ import * as vscode from 'vscode'
 import { OperationPanelViewProvider } from './operation-panel-view-provider'
 import { DesignTreeViewProvider } from './design-tree-view-provider'
 
-// export let currentRecord: GranularityRecord | null = null
-
 const refineHighlightType = vscode.window.createTextEditorDecorationType({
     isWholeLine: true,
     backgroundColor: new vscode.ThemeColor('diffEditor.insertedTextBackground'),
@@ -16,14 +14,19 @@ export const refinementDiagnostics = vscode.languages.createDiagnosticCollection
 
 // Invoked in activation function.
 export function registerWebviewForGranularityPanel(context: vscode.ExtensionContext) {
+    DesignTreeViewProvider.init(context.extensionUri);
 
-    const provider = new OperationPanelViewProvider(context.extensionUri)
-    const treeProvider = new DesignTreeViewProvider(context.extensionUri)
+    const provider = new OperationPanelViewProvider(context.extensionUri);
 
     context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider('OperationPanelView', provider),
-        vscode.window.registerWebviewViewProvider('DesignTreeView', treeProvider)
-    )
+        vscode.window.registerWebviewViewProvider('OperationPanelView', provider)
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('refinement.showDesignTree', () => {
+            DesignTreeViewProvider.createOrShow();
+        })
+    );
 
     context.subscriptions.push(refinementDiagnostics);
 }

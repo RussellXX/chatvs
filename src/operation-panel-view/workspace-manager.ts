@@ -222,6 +222,7 @@ export class WorkspaceManager {
 
         this.rebuildDerivedState();
         this.postUpdate();
+        DesignTreeViewProvider.createOrShow();
     }
 
     async divide(nodeIndex: number, customPrompt = ''): Promise<void> {

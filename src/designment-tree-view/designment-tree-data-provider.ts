@@ -190,8 +190,10 @@ export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<Desig
 
     getTreeItem(element: DesignmentTreeNode): vscode.TreeItem {
         const treeItem = new vscode.TreeItem(element.label, this.getCollapsibleState(element))
-        // treeItem.contextValue = this.getContextValue(element)
         treeItem.iconPath = this.getIconPath(element)
+        if (element instanceof ProjectNode) {
+            treeItem.contextValue = 'projectNode';
+        }
         return treeItem
     }
 

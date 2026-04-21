@@ -1,7 +1,7 @@
 import * as vscode from 'vscode'
 import * as fs from 'fs'
 import * as designmentService from './designment-tree-service'
-import { DesignmentTreeDataProvider } from './designment-tree-data-provider'
+import { DesignmentTreeDataProvider, DesignmentTreeNode } from './designment-tree-data-provider'
 import * as settings from '../settings/settings';
 import { WorkspaceManager } from '../operation-panel-view/workspace-manager';
 
@@ -30,26 +30,30 @@ const openChatGPTView = (context: vscode.ExtensionContext) => {
 
         context.subscriptions.push(treeView);
 
-        // Listen to node selection
+        // Listen to node selection — only open content file, no workspace loading
         treeView.onDidChangeSelection(async event => {
             if (event.selection.length !== 1) return;
 
             const selected = event.selection[0];
 
-            // Open the associated content file in the editor
             const contentPath: string = selected.getContentFilePath();
-
             if (fs.existsSync(contentPath)) {
                 try {
                     const doc = await vscode.workspace.openTextDocument(contentPath);
-                    await vscode.window.showTextDocument(doc);
+                    await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One, preview: false });
                 } catch (err) {
                     console.error('Failed to open content file:', err);
                 }
             }
-            
-            WorkspaceManager.getInstance().loadProject(selected.getRoot());
         })
+
+        // Right-click command on project root node
+        context.subscriptions.push(
+            vscode.commands.registerCommand('refinement.loadProjectToWorkspace', async (node: DesignmentTreeNode) => {
+                if (!node) return;
+                await WorkspaceManager.getInstance().loadProject(node.getRoot());
+            })
+        )
 
         // Command for creating a new project
         context.subscriptions.push(

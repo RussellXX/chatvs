@@ -265,3 +265,23 @@ body {
 }
 
 .confirm-btn:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
+
+.show-tree-btn {
+    flex: 0 0 auto;
+    padding: 3px 6px;
+    border: 1px solid var(--node-border);
+    border-radius: 3px;
+    background: transparent;
+    color: var(--title-color);
+    cursor: pointer;
+    font-size: 10px;
+    font-family: var(--vscode-font-family);
+    white-space: nowrap;
+    transition: color 0.12s, border-color 0.12s;
+    align-self: center;
+}
+
+.show-tree-btn:hover {
+    color: var(--text-color);
+    border-color: var(--node-selected-outline);
+}

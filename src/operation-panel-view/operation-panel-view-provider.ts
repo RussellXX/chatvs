@@ -5,6 +5,7 @@ import {
     WebviewIncomingMessage,
 } from '../types/operation-panel-view-protocol';
 import { WorkspaceManager } from './workspace-manager';
+import { DesignTreeViewProvider } from './design-tree-view-provider';
 
 export class OperationPanelViewProvider implements vscode.WebviewViewProvider {
     public static currentView: vscode.WebviewView | undefined
@@ -69,6 +70,10 @@ export class OperationPanelViewProvider implements vscode.WebviewViewProvider {
 
                 case 'confirm':
                     await wm.confirm();
+                    break;
+
+                case 'showDesignTree':
+                    DesignTreeViewProvider.createOrShow();
                     break;
 
                 case 'selectRefinement':

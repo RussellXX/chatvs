@@ -43,7 +43,8 @@ export type WebviewCommandId =
     | 'localRefine'     // 局部精化（基于编辑器选区）
     | 'generateCode'
     | 'confirm'
-    | 'selectRefinement';
+    | 'selectRefinement'
+    | 'showDesignTree';
 
 /**
  * Payload for divide / refine / generateCode commands.

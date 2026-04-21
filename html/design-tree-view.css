@@ -41,7 +41,7 @@ body {
 
 .tree-node.node-root     rect { fill: var(--node-root-bg); }
 .tree-node.node-non-leaf rect { fill: var(--node-nonleaf-bg); }
-.tree-node.node-leaf     rect { fill: var(--node-leaf-bg); }
+.tree-node.node-leaf     rect { fill: var(--node-leaf-bg); stroke: #4ec9b0; stroke-width: 1.5px; }
 
 .tree-node.selected rect {
     stroke: var(--node-selected-outline);

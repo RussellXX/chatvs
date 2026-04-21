@@ -51,7 +51,7 @@
     "commands": [
       {
         "command": "CodeToolBox.openChatGPTView",
-        "title": "打开chatGPT对话框"
+        "title": "打开项目列表"
       },
       {
         "command": "CodeToolBox.openSettings",
@@ -66,60 +66,17 @@
         "title": "Confirm Line"
       },
       {
-        "command": "refinement.globalRefine",
-        "title": "全局精化"
+        "command": "refinement.showDesignTree",
+        "title": "显示设计树"
       },
       {
-        "command": "refinement.localRefine",
-        "title": "局部精化"
-      },
-      {
-        "command": "refinement.generateCode",
-        "title": "生成代码"
-      },
-      {
-        "command": "refinement.rollback",
-        "title": "回退粒度"
-      },
-      {
-        "command": "CodeToolBox.createModule",
-        "title": "创建子模块",
-        "icon": "images/add-module.svg",
-        "enablement": "CodeToolBox.enableCreateModule"
+        "command": "refinement.loadProjectToWorkspace",
+        "title": "将项目加载到工作区"
       },
       {
         "command": "CodeToolBox.createProj",
         "title": "创建项目",
         "icon": "images/add-proj.svg"
-      },
-      {
-        "command": "CodeToolBox.deleteModule",
-        "title": "删除节点",
-        "enablement": "!(viewItem =~ /fixed/)"
-      },
-      {
-        "command": "CodeToolBox.deleteProject",
-        "title": "删除项目"
-      },
-      {
-        "command": "CodeToolBox.divideModule",
-        "title": "划分子模块",
-        "enablement": "viewItem =~ /leaf/ && !(viewItem =~ /fixed/)"
-      },
-      {
-        "command": "CodeToolBox.firstDivision",
-        "title": "初始模块划分",
-        "enablement": "viewItem =~ /empty/"
-      },
-      {
-        "command": "CodeToolBox.extractCommonDataStructure",
-        "title": "提取通用数据结构",
-        "enablement": "viewItem =~ /dataStructureExtractable/"
-      },
-      {
-        "command": "CodeToolBox.getLeafModules",
-        "title": "结束设计阶段",
-        "enablement": "viewItem =~ /designmentCompletable/"
       }
     ],
     "keybindings": [
@@ -162,12 +119,6 @@
       "RefinementContainer": [
         {
           "type": "webview",
-          "id": "DesignTreeView",
-          "name": "设计树",
-          "visibility": "visible"
-        },
-        {
-          "type": "webview",
           "id": "OperationPanelView",
           "name": "操作面板",
           "visibility": "visible"
@@ -177,73 +128,22 @@
     "viewsWelcome": [
       {
         "view": "CodeToolBox.welcome",
-        "contents": "[打开CodeSketcher对话框](command:CodeToolBox.openChatGPTView)\n[设置](command:CodeToolBox.openSettings)"
-      }
-    ],
-    "submenus": [
-      {
-        "id": "CodeToolBox.toolsMenu",
-        "label": "🤖 CodeSketcher"
+        "contents": "[打开项目列表](command:CodeToolBox.openChatGPTView)\n[设置](command:CodeToolBox.openSettings)"
       }
     ],
     "menus": {
-      "editor/context": [
-        {
-          "group": "navigation",
-          "submenu": "CodeToolBox.toolsMenu"
-        }
-      ],
-      "editor/title": [
-        {
-          "command": "CodeToolBox.switchDisplay",
-          "when": "resourceExtname == .java",
-          "group": "navigation"
-        }
-      ],
-      "CodeToolBox.toolsMenu": [],
       "view/title": [
-        {
-          "command": "CodeToolBox.createModule",
-          "when": "view == CodeToolBox.chatGPTView",
-          "group": "navigation"
-        },
         {
           "command": "CodeToolBox.createProj",
           "when": "view == CodeToolBox.chatGPTView",
           "group": "navigation"
         }
       ],
-      "comments/commentThread/context": [],
       "view/item/context": [
         {
-          "command": "CodeToolBox.deleteModule",
-          "when": "view == CodeToolBox.chatGPTView && !(viewItem =~ /banned/) && viewItem =~ /module/",
-          "group": "2_human_design@1"
-        },
-        {
-          "command": "CodeToolBox.deleteProject",
-          "when": "view == CodeToolBox.chatGPTView && !(viewItem =~ /banned/) && viewItem =~ /project/",
-          "group": "2_human_design@2"
-        },
-        {
-          "command": "CodeToolBox.extractCommonDataStructure",
-          "when": "view == CodeToolBox.chatGPTView && !(viewItem =~ /banned/) && viewItem =~ /project/",
-          "group": "1_ai_design@2"
-        },
-        {
-          "command": "CodeToolBox.firstDivision",
-          "when": "view == CodeToolBox.chatGPTView && !(viewItem =~ /banned/) && viewItem =~ /project/",
-          "group": "1_ai_design@1"
-        },
-        {
-          "command": "CodeToolBox.divideModule",
-          "when": "view == CodeToolBox.chatGPTView && !(viewItem =~ /banned/) && viewItem =~ /module/",
-          "group": "1_ai_design@4"
-        },
-        {
-          "command": "CodeToolBox.getLeafModules",
-          "when": "view == CodeToolBox.chatGPTView && !(viewItem =~ /banned/) && viewItem =~ /project/",
-          "group": "1_ai_design@3"
+          "command": "refinement.loadProjectToWorkspace",
+          "when": "view == CodeToolBox.chatGPTView && viewItem == projectNode",
+          "group": "0_workspace@1"
         }
       ]
     }

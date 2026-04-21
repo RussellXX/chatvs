@@ -202,6 +202,10 @@
         confirmBtn: null,
 
         init() {
+            document.getElementById('show-tree-btn').addEventListener('click', () => {
+                Messenger.executeCommand('showDesignTree', {});
+            });
+
             this.divideBtn       = document.getElementById('divide-btn');
             this.refineMainBtn   = document.getElementById('refine-main-btn');
             this.refineArrowBtn  = document.getElementById('refine-dropdown-btn');
