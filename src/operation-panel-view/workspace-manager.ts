@@ -14,6 +14,7 @@ import {
 } from '../designment-tree-view/designment-tree-data-provider';
 import { OperationPanelViewProvider } from './operation-panel-view-provider';
 import { DesignTreeViewProvider } from './design-tree-view-provider';
+import { DivisionPlanViewProvider } from './division-plan-view-provider';
 import {
     NodeType,
     TreeNodeData,
@@ -205,9 +206,14 @@ export class WorkspaceManager {
             cancellable: false
         }, async progress => {
             try {
-                await this.performDivision(node, customPrompt);
-                progress.report({ message: '模块划分成功！' });
-                await delay(1000);
+                const applied = await this.performDivision(node, customPrompt);
+                if (applied) {
+                    progress.report({ message: '模块划分成功！' });
+                    await delay(1000);
+                } else {
+                    progress.report({ message: '已取消本次模块划分。' });
+                    await delay(600);
+                }
             } catch (err) {
                 vscode.window.showErrorMessage(`模块划分失败: ${err}`);
             }
@@ -551,7 +557,7 @@ export class WorkspaceManager {
     private async performDivision(
         node: ProjectNode | ModuleNode,
         customPrompt = ''
-    ): Promise<void> {
+    ): Promise<boolean> {
         const projectPath = this.projectRoot!.absolutePath;
         const pseudoPath = settings.getPseudoPath();
 
@@ -596,28 +602,12 @@ export class WorkspaceManager {
             );
         }
 
-        let result: any[] = [];
-        let userPrompt = appendCustomPrompt(prompt.user, customPrompt);
-        let valid = false;
-
-        for (let attempt = 0; attempt < 5 && !valid; attempt++) {
-            try {
-                const raw = await openaiHelper.callOpenAIForJSON(
-                    prompt.system, userPrompt, ModulesArraySchema, 3
-                );
-                result = JSON.parse(raw.replace(/```json/g, '').replace(/```/g, '').trim());
-                const check = validateModulePrefix(result, expectedPrefix);
-                if (check.valid) {
-                    valid = true;
-                } else {
-                    userPrompt += `\n\n注意：以下模块名称不符合要求，必须以 "${expectedPrefix}" 开头: ${check.invalidModules.join(', ')}。请修正。`;
-                }
-            } catch (e) {
-                console.error(`Division attempt ${attempt + 1} failed:`, e);
-            }
+        const plans = await this.generateDivisionPlans(prompt, customPrompt, expectedPrefix, 3);
+        const picked = await DivisionPlanViewProvider.pickPlan(node.label, plans);
+        if (picked === undefined) {
+            return false;
         }
-
-        if (!valid) throw new Error('LLM 未能生成符合命名规范的结果。');
+        const result = plans[picked];
 
         if (!isFirstLevel) {
             const relPath = path.relative(pseudoPath, realNodePath);
@@ -628,7 +618,7 @@ export class WorkspaceManager {
                 (m.path ?? '').replace(/[\/\\]/g, path.sep) !== relPath
             );
 
-            const newNames = result.map((m: any) => m.name);
+            const newNames = result.map((m: DivisionModuleSpec) => m.name);
             const propagateDeps = (list: any[]) => list.forEach((m: any) => {
                 if (m.dependencies?.includes(parentName)) {
                     m.dependencies = m.dependencies.filter((d: string) => d !== parentName);
@@ -663,6 +653,81 @@ export class WorkspaceManager {
 
         writeJsonAtomically(modulesDraftPath, allModules);
         writeJsonAtomically(ongoingDraftPath, ongoing);
+        return true;
+    }
+
+    private async generateDivisionPlans(
+        prompt: { system: string; user: string },
+        customPrompt: string,
+        expectedPrefix: string,
+        count: number
+    ): Promise<DivisionModuleSpec[][]> {
+        const plans: DivisionModuleSpec[][] = [];
+        const seen = new Set<string>();
+        const maxRounds = Math.max(8, count * 3);
+
+        for (let round = 0; round < maxRounds && plans.length < count; round++) {
+            let userPrompt = appendCustomPrompt(prompt.user, customPrompt);
+            userPrompt += `\n\n请给出一个与之前不同的模块划分方案，强调方案差异。`;
+            userPrompt += `\n\n模块数量必须按需求复杂度自然决定，禁止固定输出某个数量（例如固定 5 个）。`;
+            if (plans.length > 0) {
+                const existingNames = plans
+                    .map((p, idx) => `方案${idx + 1}: ${p.map(m => m.name).join(', ')}`)
+                    .join('\n');
+                userPrompt += `\n\n已有方案如下，请避免重复：\n${existingNames}`;
+            }
+
+            const candidate = await this.generateSingleDivisionPlan(prompt.system, userPrompt, expectedPrefix);
+            const key = JSON.stringify(candidate.map(m => ({
+                name: m.name,
+                description: m.description,
+                dependencies: [...(m.dependencies ?? [])].sort()
+            })));
+
+            if (seen.has(key)) {
+                continue;
+            }
+
+            seen.add(key);
+            plans.push(candidate);
+        }
+
+        if (plans.length === 0) {
+            throw new Error('LLM 未能生成可用的模块划分方案。');
+        }
+
+        return plans;
+    }
+
+    private async generateSingleDivisionPlan(
+        systemPrompt: string,
+        initialUserPrompt: string,
+        expectedPrefix: string
+    ): Promise<DivisionModuleSpec[]> {
+        let userPrompt = initialUserPrompt;
+
+        for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+                const raw = await openaiHelper.callOpenAIForJSON(
+                    systemPrompt,
+                    userPrompt,
+                    ModulesArraySchema,
+                    3
+                );
+
+                const parsed = JSON.parse(raw.replace(/```json/g, '').replace(/```/g, '').trim()) as DivisionModuleSpec[];
+                const check = validateModulePrefix(parsed, expectedPrefix);
+                if (check.valid) {
+                    return parsed;
+                }
+
+                userPrompt += `\n\n注意：以下模块名称不符合要求，必须以 "${expectedPrefix}" 开头: ${check.invalidModules.join(', ')}。请修正。`;
+            } catch (e) {
+                console.error(`Division plan attempt ${attempt + 1} failed:`, e);
+            }
+        }
+
+        throw new Error('LLM 未能生成符合命名规范的方案。');
     }
 
     private rebuildDerivedState(): void {
@@ -879,4 +944,11 @@ function diffLineStatus(
     }
 
     return { newStatus, highlightRanges };
+}
+
+interface DivisionModuleSpec {
+    name: string;
+    description: string;
+    dependencies: string[];
+    path?: string;
 }
