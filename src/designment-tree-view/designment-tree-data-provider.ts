@@ -1,5 +1,6 @@
 import * as vscode from 'vscode'
 import * as path from 'path'
+import * as fs from 'fs'
 import { buildTreeFromSerializedForm, persistenceTreeNode, persistTree } from './designment-tree-persistence'
 import { getTypeByClass, registerNodeType } from './node-type-registry'
 
@@ -160,6 +161,31 @@ export class RequirementNode extends DesignmentTreeNode {
     }
 }
 
+/**
+ * Virtual node representing common_data_structures.json under a project.
+ * It is dynamically injected by getChildren() and is never persisted to disk.
+ */
+export class CommonDataStructureNode extends DesignmentTreeNode {
+    constructor(parent: ProjectNode) {
+        super('Common Data Structure', parent.absolutePath, parent);
+    }
+
+    isExtendable(): boolean { return false; }
+    isLeaf(): boolean { return true; }
+
+    getContentFilePath(): string {
+        return path.join(this.absolutePath, 'common_data_structures.json');
+    }
+
+    getObject(): persistenceTreeNode {
+        throw new Error('CommonDataStructureNode is virtual and must not be persisted.');
+    }
+
+    static fromObject(_obj: persistenceTreeNode, parent: ProjectNode): CommonDataStructureNode {
+        return new CommonDataStructureNode(parent);
+    }
+}
+
 // Use singleton pattern for global unique instance.
 export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<DesignmentTreeNode> {
 
@@ -202,28 +228,32 @@ export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<Desig
     }
 
     private getIconPath(element: DesignmentTreeNode): vscode.ThemeIcon | vscode.Uri {
-
         if (element instanceof ProjectNode) return new vscode.ThemeIcon('project', new vscode.ThemeColor('charts.white'));
-        else if (element instanceof ModuleNode) {
+        if (element instanceof ModuleNode) {
             const iconName = element.isLeaf() ? 'circle' : 'type-hierarchy';
             return new vscode.ThemeIcon(iconName, new vscode.ThemeColor('charts.blue'));
         }
-        else if (element instanceof RequirementNode) return new vscode.ThemeIcon('checklist', new vscode.ThemeColor('charts.yellow'));
-        else {
-            // No other types
-            throw new Error('Unexpected node type for icon path retrieval.')
-        }
+        if (element instanceof RequirementNode) return new vscode.ThemeIcon('checklist', new vscode.ThemeColor('charts.yellow'));
+        if (element instanceof CommonDataStructureNode) return new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.red'));
+        throw new Error('Unexpected node type for icon path retrieval.');
     }
 
 
     getChildren(element?: DesignmentTreeNode): Thenable<DesignmentTreeNode[]> {
         if (!element) {
-            return Promise.resolve(this.localNodeTree)
+            return Promise.resolve(this.localNodeTree);
         }
 
-        return Promise.resolve(
-            element.children ?? []
-        )
+        if (element instanceof ProjectNode) {
+            const children: DesignmentTreeNode[] = [...(element.children ?? [])];
+            const commonDSPath = path.join(element.absolutePath, 'common_data_structures.json');
+            if (fs.existsSync(commonDSPath)) {
+                children.unshift(new CommonDataStructureNode(element));
+            }
+            return Promise.resolve(children);
+        }
+
+        return Promise.resolve(element.children ?? []);
     }
 
 

@@ -76,6 +76,10 @@ export class OperationPanelViewProvider implements vscode.WebviewViewProvider {
                     DesignTreeViewProvider.createOrShow();
                     break;
 
+                case 'openCommonDS':
+                    await wm.openCommonDS();
+                    break;
+
                 case 'selectRefinement':
                     wm.selectRefinement(p?.moduleIndex ?? -1, p?.entryIndex ?? -1);
                     break;

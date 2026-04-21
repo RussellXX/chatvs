@@ -7,18 +7,20 @@
     const State = {
         nodes: [],
         currentModule: -1,
+        hasCommonDS: false,
         treeRoot: null,
 
         update(data) {
             this.nodes         = Array.isArray(data.nodes) ? data.nodes : [];
             this.currentModule = Number.isInteger(data.currentModule) ? data.currentModule : -1;
-            this.treeRoot      = TreeBuilder.build(this.nodes);
+            this.hasCommonDS   = !!data.hasCommonDS;
+            this.treeRoot      = TreeBuilder.build(this.nodes, this.hasCommonDS);
         }
     };
 
     // ── Pre-order list → multi-way tree ──────────────────────────────────────
     const TreeBuilder = {
-        build(nodes) {
+        build(nodes, hasCommonDS) {
             if (!nodes || nodes.length === 0) return null;
             let cursor = 0;
             const walk = () => {
@@ -38,7 +40,18 @@
                 }
                 return node;
             };
-            return walk();
+            const root = walk();
+            // Inject common DS as the first child of root when available
+            if (root && hasCommonDS) {
+                root.children.unshift({
+                    originalIndex: -1,
+                    nodeType: 'common-ds',
+                    title: '通用数据结构',
+                    desc: '各模块间传递的共用数据结构，含字段语义描述与使用模块说明',
+                    children: []
+                });
+            }
+            return root;
         }
     };
 
@@ -79,16 +92,22 @@
                     .target(l => [l.target.x, l.target.y])
                     .x(d => d[0]).y(d => d[1]));
 
+            const isSelected = d => d.data.originalIndex >= 0 && d.data.originalIndex === selectedIndex;
+
             const nodeG = g.append('g').selectAll('g').data(root.descendants()).join('g')
                 .attr('class', d => {
                     const parts = ['tree-node', `node-${d.data.nodeType || 'non-leaf'}`];
-                    if (d.data.originalIndex === selectedIndex) parts.push('selected');
+                    if (isSelected(d)) parts.push('selected');
                     return parts.join(' ');
                 })
                 .attr('transform', d => `translate(${d.x - NW / 2}, ${d.y})`)
                 .on('click', (event, d) => {
                     event.stopPropagation();
-                    if (typeof onNodeClick === 'function') onNodeClick(d.data.originalIndex);
+                    if (d.data.originalIndex === -1) {
+                        vscode.postMessage({ type: 'executeCommand', commandId: 'openCommonDS', payload: {} });
+                    } else if (typeof onNodeClick === 'function') {
+                        onNodeClick(d.data.originalIndex);
+                    }
                 });
 
             nodeG.append('rect').attr('width', NW).attr('height', NH).attr('rx', 5).attr('ry', 5);
@@ -97,7 +116,7 @@
                 .append('xhtml:div')
                 .attr('class', d => {
                     const parts = ['node-inner', `node-inner-${d.data.nodeType || 'non-leaf'}`];
-                    if (d.data.originalIndex === selectedIndex) parts.push('node-inner-selected');
+                    if (isSelected(d)) parts.push('node-inner-selected');
                     return parts.join(' ');
                 })
                 .html(d => {

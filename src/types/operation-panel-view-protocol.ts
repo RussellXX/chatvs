@@ -21,6 +21,7 @@ export interface UpdateViewPayload {
     refinementHistories: Record<number, RefinementEntry[]>; // key = node index
     currentRefinementEntry: number;                   // index in current module's history, -1 = none
     isBusy: boolean;
+    hasCommonDS: boolean;                             // whether common_data_structures.json exists (draft or real)
 }
 
 export interface UpdateViewMessage {
@@ -44,7 +45,8 @@ export type WebviewCommandId =
     | 'generateCode'
     | 'confirm'
     | 'selectRefinement'
-    | 'showDesignTree';
+    | 'showDesignTree'
+    | 'openCommonDS';
 
 /**
  * Payload for divide / refine / generateCode commands.

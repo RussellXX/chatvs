@@ -46,6 +46,8 @@ export class DesignTreeViewProvider {
             const { commandId, payload } = message;
             if (commandId === 'selectModule') {
                 WorkspaceManager.getInstance().selectModule((payload as any)?.index ?? -1);
+            } else if (commandId === 'openCommonDS') {
+                WorkspaceManager.getInstance().openCommonDS();
             }
         });
 
