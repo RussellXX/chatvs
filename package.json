@@ -1,6 +1,6 @@
 {
   "name": "2002",
-  "publisher": "codesketcher",
+  "publisher": "aicase",
   "displayName": "ChatVS",
   "description": "A program to help code via llm",
   "version": "0.0.1",
@@ -90,7 +90,7 @@
       "activitybar": [
         {
           "id": "CodeToolBox",
-          "title": "CodeSketcher",
+          "title": "aicase",
           "icon": "images/tool.png",
           "initialWidth": 10000
         }
@@ -112,7 +112,7 @@
         },
         {
           "id": "CodeToolBox.chatGPTView",
-          "name": "CodeSketcher",
+          "name": "aicase",
           "when": "CodeToolBox.chatGPTView"
         }
       ],

@@ -800,6 +800,7 @@ export async function getModuleDivisionPrompt1(filePath: string, context: vscode
 
     const projectName = path.basename(path.dirname(filePath));
     const userPrompt = `请根据以下原始需求文档进行模块划分：\n\n${fileContent}\n\n
+    重要约束：模块数量必须由需求复杂度决定，不要固定输出某个数量（例如固定 5 个）。在保证高内聚低耦合前提下给出合理数量。\n\n
     请直接返回符合要求的 JSON 数组，不要使用markdown代码块标记（\`\`\`），只返回纯文本内容。`;
 
 
@@ -820,7 +821,7 @@ export async function getModuleDivisionPrompt2(modulesPath: string, requirements
     const requirementsContentBytes = await vscode.workspace.fs.readFile(vscode.Uri.file(requirementsPath));
     const requirementsContent = new TextDecoder().decode(requirementsContentBytes);
 
-    const userPrompt = `原始需求文档：\n${requirementsContent}\n\n当前系统架构（包含所有模块的 JSON 列表）：\n${modulesContent}\n\n待拆解的目标模块名称：\n${moduleName}\n\n请直接返回符合要求的 JSON 数组，不要使用markdown代码块标记（\`\`\`），只返回纯文本内容。`;
+    const userPrompt = `原始需求文档：\n${requirementsContent}\n\n当前系统架构（包含所有模块的 JSON 列表）：\n${modulesContent}\n\n待拆解的目标模块名称：\n${moduleName}\n\n重要约束：子模块数量必须由该父模块职责复杂度决定，不要固定输出某个数量（例如固定 5 个）。\n\n请直接返回符合要求的 JSON 数组，不要使用markdown代码块标记（\`\`\`），只返回纯文本内容。`;
 
     return {
         system: systemPrompt,

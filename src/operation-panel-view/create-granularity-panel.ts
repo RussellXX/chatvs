@@ -1,6 +1,7 @@
 import * as vscode from 'vscode'
 import { OperationPanelViewProvider } from './operation-panel-view-provider'
 import { DesignTreeViewProvider } from './design-tree-view-provider'
+import { DivisionPlanViewProvider } from './division-plan-view-provider'
 
 const refineHighlightType = vscode.window.createTextEditorDecorationType({
     isWholeLine: true,
@@ -15,6 +16,7 @@ export const refinementDiagnostics = vscode.languages.createDiagnosticCollection
 // Invoked in activation function.
 export function registerWebviewForGranularityPanel(context: vscode.ExtensionContext) {
     DesignTreeViewProvider.init(context.extensionUri);
+    DivisionPlanViewProvider.init(context.extensionUri);
 
     const provider = new OperationPanelViewProvider(context.extensionUri);
 
