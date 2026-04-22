@@ -623,56 +623,58 @@ export async function getLocalRefinePrompt(
 /**
  * 代码生成提示词 - 从伪代码生成实际代码
  */
-export async function getGenerateCodePrompt(fileContent: string, lastGranularity: string, language: string = 'python', currentModulePath?: string): Promise<{ system: string; user: string }> {
-    // 根据语言路由到对应的实现函数
+export async function getGenerateCodePrompt(
+    fileContent: string,
+    lastGranularity: string,
+    language: string = 'python',
+    currentModulePath?: string,
+    codeProjectRoot?: string   // explicit root (e.g. staging dir); overrides computed path
+): Promise<{ system: string; user: string }> {
     switch (language.toLowerCase()) {
         case 'python':
-            return getGenerateCodePromptForPython(fileContent, lastGranularity, currentModulePath);
+            return getGenerateCodePromptForPython(fileContent, lastGranularity, currentModulePath, codeProjectRoot);
 
-        // 其他语言可以在这里扩展
         // case 'java':
-        //     return getGenerateCodePromptForJava(fileContent, lastGranularity, currentModulePath);
-        // case 'cpp':
-        // case 'c++':
-        //     return getGenerateCodePromptForCpp(fileContent, lastGranularity, currentModulePath);
+        //     return getGenerateCodePromptForJava(fileContent, lastGranularity, currentModulePath, codeProjectRoot);
 
         default:
-            // 回退到通用实现（使用硬编码prompt）
             console.warn(`[getGenerateCodePrompt] 语言 ${language} 暂未实现专用prompt，使用通用prompt`);
-            return getGenerateCodePromptGeneric(fileContent, lastGranularity, language, currentModulePath);
+            return getGenerateCodePromptGeneric(fileContent, lastGranularity, language, currentModulePath, codeProjectRoot);
     }
 }
 
 /**
  * Python语言专用：代码生成提示词
  */
-async function getGenerateCodePromptForPython(fileContent: string, lastGranularity: string, currentModulePath?: string): Promise<{ system: string; user: string }> {
-    // 获取依赖模块代码 - 代码生成时需要实际代码
+async function getGenerateCodePromptForPython(
+    fileContent: string,
+    lastGranularity: string,
+    currentModulePath?: string,
+    codeProjectRoot?: string
+): Promise<{ system: string; user: string }> {
     let dependenciesCode = '';
     if (currentModulePath) {
         dependenciesCode = await getDependencyModulesCode(currentModulePath, 'actual');
     }
 
-    // 获取实际数据结构文件内容
-    let actualDataStructureCode = '';
-    if (currentModulePath) {
-        const aiPath = getPseudoPath();
-        const relativePath = path.relative(aiPath, currentModulePath);
-        const pathParts = relativePath.split(path.sep);
-
+    // Resolve the root from which to read data_structures.py.
+    // Caller may pass the staging root directly; otherwise derive from module path.
+    let resolvedCodeRoot = codeProjectRoot;
+    if (!resolvedCodeRoot && currentModulePath) {
+        const pathParts = path.relative(getPseudoPath(), currentModulePath).split(path.sep);
         if (pathParts.length > 0) {
-            // 实际数据结构文件存放在 codes 目录下
-            const projectName = pathParts[0];
-            const codeProjectRoot = path.join(getCodesPath(), projectName);
-            const { getActualDataStructureContent } = await import('../tools/actual-datastructure-generator.js');
-            actualDataStructureCode = getActualDataStructureContent(codeProjectRoot, 'python');
-
-            if (actualDataStructureCode) {
-                console.log('[getGenerateCodePromptForPython] 成功读取实际数据结构文件');
-            } else {
-                console.log('[getGenerateCodePromptForPython] 未找到实际数据结构文件');
-            }
+            resolvedCodeRoot = path.join(getCodesPath(), pathParts[0]);
         }
+    }
+
+    let actualDataStructureCode = '';
+    if (resolvedCodeRoot) {
+        const { getActualDataStructureContent } = await import('../tools/actual-datastructure-generator.js');
+        actualDataStructureCode = getActualDataStructureContent(resolvedCodeRoot, 'python');
+        console.log(actualDataStructureCode
+            ? '[getGenerateCodePromptForPython] 成功读取实际数据结构文件'
+            : '[getGenerateCodePromptForPython] 未找到实际数据结构文件'
+        );
     }
 
     // 获取扩展根路径
@@ -702,8 +704,7 @@ async function getGenerateCodePromptForPython(fileContent: string, lastGranulari
 
     if (!fs.existsSync(promptPath)) {
         console.error('[getGenerateCodePromptForPython] 找不到generateCode_python.md文件:', promptPath);
-        // 回退到通用实现
-        return getGenerateCodePromptGeneric(fileContent, lastGranularity, 'python', currentModulePath);
+        return getGenerateCodePromptGeneric(fileContent, lastGranularity, 'python', currentModulePath, codeProjectRoot);
     }
 
     const systemPrompt = fs.readFileSync(promptPath, 'utf-8');
@@ -717,33 +718,34 @@ async function getGenerateCodePromptForPython(fileContent: string, lastGranulari
 /**
  * 通用实现：代码生成提示词（回退方案）
  */
-async function getGenerateCodePromptGeneric(fileContent: string, lastGranularity: string, language: string, currentModulePath?: string): Promise<{ system: string; user: string }> {
-    // 获取依赖模块代码
+async function getGenerateCodePromptGeneric(
+    fileContent: string,
+    lastGranularity: string,
+    language: string,
+    currentModulePath?: string,
+    codeProjectRoot?: string
+): Promise<{ system: string; user: string }> {
     let dependenciesCode = '';
     if (currentModulePath) {
         dependenciesCode = await getDependencyModulesCode(currentModulePath, 'actual');
     }
 
-    // 获取实际数据结构文件内容
-    let actualDataStructureCode = '';
-    if (currentModulePath) {
-        const aiPath = getPseudoPath();
-        const relativePath = path.relative(aiPath, currentModulePath);
-        const pathParts = relativePath.split(path.sep);
-
+    let resolvedCodeRoot = codeProjectRoot;
+    if (!resolvedCodeRoot && currentModulePath) {
+        const pathParts = path.relative(getPseudoPath(), currentModulePath).split(path.sep);
         if (pathParts.length > 0) {
-            // 实际数据结构文件存放在 codes 目录下
-            const projectName = pathParts[0];
-            const codeProjectRoot = path.join(getCodesPath(), projectName);
-            const { getActualDataStructureContent } = await import('../tools/actual-datastructure-generator.js');
-            actualDataStructureCode = getActualDataStructureContent(codeProjectRoot, language);
-
-            if (actualDataStructureCode) {
-                console.log('[getGenerateCodePromptGeneric] 成功读取实际数据结构文件');
-            } else {
-                console.log('[getGenerateCodePromptGeneric] 未找到实际数据结构文件');
-            }
+            resolvedCodeRoot = path.join(getCodesPath(), pathParts[0]);
         }
+    }
+
+    let actualDataStructureCode = '';
+    if (resolvedCodeRoot) {
+        const { getActualDataStructureContent } = await import('../tools/actual-datastructure-generator.js');
+        actualDataStructureCode = getActualDataStructureContent(resolvedCodeRoot, language);
+        console.log(actualDataStructureCode
+            ? '[getGenerateCodePromptGeneric] 成功读取实际数据结构文件'
+            : '[getGenerateCodePromptGeneric] 未找到实际数据结构文件'
+        );
     }
 
     // 获取扩展根路径

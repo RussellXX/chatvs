@@ -33,6 +33,7 @@ import {
     readJsonDraftFirst,
 } from './draft-overlay';
 import { CommonDSManager } from './common-ds-manager';
+import { generateActualDS } from './actual-ds-generator';
 import * as Diff from 'diff';
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -113,7 +114,6 @@ export class WorkspaceManager {
 
     // index <-> path mapping (rebuilt from workspace tree each time)
     private indexToPath = new Map<number, string>();
-    private pathToIndex = new Map<string, number>();
 
     private _commonDS: CommonDSManager;
 
@@ -184,6 +184,28 @@ export class WorkspaceManager {
                 { modal: true }, '继续'
             );
             if (answer !== '继续') return;
+
+            const hasCodeHistory = Object.values(this.refinementHistories).some(
+                h => h.some(e => e.type === 'code')
+            );
+            if (hasCodeHistory) {
+                // Clean staging (code generated but not yet confirmed).
+                const stagingDir = this.codesStagingDir(this.projectRoot.absolutePath);
+                if (fs.existsSync(stagingDir)) {
+                    fs.rmSync(stagingDir, { recursive: true, force: true });
+                }
+                // Clean real codes dir (code was confirmed in a previous save).
+                try {
+                    const realCodeDir = path.join(
+                        settings.getCodesPath(), path.basename(this.projectRoot.absolutePath)
+                    );
+                    if (fs.existsSync(realCodeDir)) {
+                        fs.rmSync(realCodeDir, { recursive: true, force: true });
+                    }
+                } catch (err) {
+                    console.warn('[WorkspaceManager] 清理代码目录失败:', err);
+                }
+            }
 
             this._suppressHistoryPaths = new Set(
                 Object.keys(this.refinementHistories)
@@ -406,35 +428,50 @@ export class WorkspaceManager {
             cancellable: false
         }, async progress => {
             try {
+                const stagingRoot = this.codesStagingDir(projectPath);
+                const topoIdx = this.leafOrder.indexOf(nodeIndex);
+
+                // Phase 1: first-module setup — project scaffold + data structure file.
+                // Must complete before building the code prompt so that data_structures.py
+                // is already in staging when the prompt reads it.
+                if (topoIdx === 0) {
+                    progress.report({ message: '正在初始化代码项目...' });
+                    const { initialProject } = await import('../tools/project-initializer.js');
+                    await initialProject(stagingRoot, language);
+
+                    if (this._commonDS.exists(projectPath)) {
+                        progress.report({ message: '正在生成数据结构定义...' });
+                        const commonDSContent = fs.readFileSync(
+                            this._commonDS.draftFirstPath(projectPath), 'utf8'
+                        );
+                        await generateActualDS(stagingRoot, commonDSContent, language, this.context);
+                    }
+                }
+
+                // Phase 2: generate module code (prompt reads data_structures.py from staging).
                 const lastEntry = history[history.length - 1];
                 const fileContent = fs.readFileSync(lastEntry.filePath, 'utf8');
                 const pseudoCount = history.filter(e => e.type === 'pseudo').length;
                 const prompt = await openaiHelper.getGenerateCodePrompt(
-                    fileContent, `粒度${pseudoCount}`, language, modulePath
+                    fileContent, `粒度${pseudoCount}`, language, modulePath, stagingRoot
                 );
                 const userPrompt = appendCustomPrompt(prompt.user, customPrompt);
                 const raw = await openaiHelper.callOpenAIForJSON(prompt.system, userPrompt);
                 const code = cleanLLMResponse(raw);
-
-                const codeProjectRoot = path.join(settings.getCodesPath(), projectName);
-                const topoIdx = this.leafOrder.indexOf(nodeIndex);
-
-                if (topoIdx === 0) {
-                    const { initialProject } = await import('../tools/project-initializer.js');
-                    await initialProject(codeProjectRoot, language);
-                    progress.report({ message: '正在初始化代码项目...' });
-                }
 
                 const { writeModule } = await import('../tools/module-writer.js');
                 const realModulePath = isDraftPath(projectPath, modulePath)
                     ? toRealPath(projectPath, modulePath)
                     : modulePath;
                 const moduleRelPath = path.relative(projectPath, realModulePath);
-                const generatedFilePath = await writeModule(codeProjectRoot, moduleRelPath, code, language);
+                const generatedFilePath = await writeModule(stagingRoot, moduleRelPath, code, language);
 
                 if (topoIdx === this.leafOrder.length - 1) {
+                    // Launch config points to the real path (post-confirm location).
+                    const realCodeDir = path.join(settings.getCodesPath(), projectName);
+                    const realFilePath = path.join(realCodeDir, path.relative(stagingRoot, generatedFilePath));
                     const { updateRootLaunchConfig } = await import('../tools/launch-config-updater.js');
-                    await updateRootLaunchConfig(settings.getProjectPath(), projectName, generatedFilePath, language);
+                    await updateRootLaunchConfig(settings.getProjectPath(), projectName, realFilePath, language);
                     vscode.window.showInformationMessage(`已更新调试配置: "Run ${projectName}"`);
                 }
 
@@ -457,8 +494,19 @@ export class WorkspaceManager {
         if (!this.projectRoot || !this.workspaceRoot) return;
 
         const projectAbs = this.projectRoot.absolutePath;
+        const stagingDir = this.codesStagingDir(projectAbs);
+        const realCodeDir = path.join(settings.getCodesPath(), path.basename(projectAbs));
 
         try {
+            // Promote generated code staging to the real codes directory first,
+            // so that promoteDraft() does not copy it into projectAbs.
+            if (fs.existsSync(stagingDir)) {
+                if (fs.existsSync(realCodeDir)) {
+                    fs.rmSync(realCodeDir, { recursive: true, force: true });
+                }
+                fs.cpSync(stagingDir, realCodeDir, { recursive: true });
+                fs.rmSync(stagingDir, { recursive: true, force: true });
+            }
             promoteDraft(projectAbs);
             this._commonDS.cleanupOnConfirm(projectAbs);
         } catch (err) {
@@ -469,7 +517,11 @@ export class WorkspaceManager {
         this.remapTreeToReal(this.workspaceRoot, projectAbs);
         for (const history of Object.values(this.refinementHistories)) {
             for (const entry of history) {
-                if (isDraftPath(projectAbs, entry.filePath)) {
+                if (!isDraftPath(projectAbs, entry.filePath)) continue;
+                if (entry.type === 'code') {
+                    // Code entries were staged in .tmp/_code_output; remap to real codes dir.
+                    entry.filePath = path.join(realCodeDir, path.relative(stagingDir, entry.filePath));
+                } else {
                     entry.filePath = toRealPath(projectAbs, entry.filePath);
                 }
             }
@@ -671,7 +723,6 @@ export class WorkspaceManager {
             this.leafOrder = [];
             this.leafModuleIndices = new Set();
             this.indexToPath = new Map();
-            this.pathToIndex = new Map();
             return;
         }
 
@@ -713,7 +764,6 @@ export class WorkspaceManager {
 
         this.nodes = nodes;
         this.indexToPath = indexToPath;
-        this.pathToIndex = pathToIndex;
         this.leafModuleIndices = leafModuleIndices;
 
         const pseudoPath = settings.getPseudoPath();
@@ -808,6 +858,11 @@ export class WorkspaceManager {
             (child as any).parent = node;
             if (child instanceof ModuleNode) this.fixParentRefs(child);
         }
+    }
+
+    /** Staging directory for generated code files within the draft overlay. */
+    private codesStagingDir(projectAbs: string): string {
+        return path.join(projectAbs, '.tmp', '_code_output');
     }
 
     private async openInEditor(filePath: string): Promise<void> {

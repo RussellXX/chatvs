@@ -3,6 +3,8 @@ import * as path from 'path'
 import * as fs from 'fs'
 import { buildTreeFromSerializedForm, persistenceTreeNode, persistTree } from './designment-tree-persistence'
 import { getTypeByClass, registerNodeType } from './node-type-registry'
+import { getCodesPath } from '../settings/settings'
+import { actualDSRealPath } from '../operation-panel-view/actual-ds-generator'
 
 const CONTENT_FILENAME = 'content.txt';
 const REQUIREMENT_NODE_LABEL = 'Project Requirement'
@@ -162,6 +164,32 @@ export class RequirementNode extends DesignmentTreeNode {
 }
 
 /**
+ * Virtual node representing the language-specific data structure source file
+ * (e.g. data_structures.py) under the project's codes directory.
+ * Dynamically injected by getChildren(); never persisted.
+ */
+export class ActualDataStructureNode extends DesignmentTreeNode {
+    private readonly filePath: string;
+
+    constructor(parent: ProjectNode, filePath: string) {
+        super('Actual Data Structure', parent.absolutePath, parent);
+        this.filePath = filePath;
+    }
+
+    isExtendable(): boolean { return false; }
+    isLeaf(): boolean { return true; }
+    getContentFilePath(): string { return this.filePath; }
+
+    getObject(): persistenceTreeNode {
+        throw new Error('ActualDataStructureNode is virtual and must not be persisted.');
+    }
+
+    static fromObject(_obj: persistenceTreeNode, _parent: ProjectNode): ActualDataStructureNode {
+        throw new Error('ActualDataStructureNode cannot be reconstructed from serialized form.');
+    }
+}
+
+/**
  * Virtual node representing common_data_structures.json under a project.
  * It is dynamically injected by getChildren() and is never persisted to disk.
  */
@@ -220,6 +248,13 @@ export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<Desig
         if (element instanceof ProjectNode) {
             treeItem.contextValue = 'projectNode';
         }
+        if (element instanceof ActualDataStructureNode) {
+            treeItem.command = {
+                command: 'vscode.open',
+                title: 'Open File',
+                arguments: [vscode.Uri.file(element.getContentFilePath())]
+            };
+        }
         return treeItem
     }
 
@@ -235,6 +270,7 @@ export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<Desig
         }
         if (element instanceof RequirementNode) return new vscode.ThemeIcon('checklist', new vscode.ThemeColor('charts.yellow'));
         if (element instanceof CommonDataStructureNode) return new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.red'));
+        if (element instanceof ActualDataStructureNode) return new vscode.ThemeIcon('symbol-class', new vscode.ThemeColor('charts.green'));
         throw new Error('Unexpected node type for icon path retrieval.');
     }
 
@@ -246,10 +282,22 @@ export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<Desig
 
         if (element instanceof ProjectNode) {
             const children: DesignmentTreeNode[] = [...(element.children ?? [])];
+
             const commonDSPath = path.join(element.absolutePath, 'common_data_structures.json');
             if (fs.existsSync(commonDSPath)) {
                 children.unshift(new CommonDataStructureNode(element));
             }
+
+            // Inject actual data structure node when the promoted file exists in codes dir.
+            try {
+                const projectName = path.basename(element.absolutePath);
+                const realCodeDir = path.join(getCodesPath(), projectName);
+                const dsPath = actualDSRealPath(realCodeDir, 'python');
+                if (fs.existsSync(dsPath)) {
+                    children.push(new ActualDataStructureNode(element, dsPath));
+                }
+            } catch { /* settings not configured; skip silently */ }
+
             return Promise.resolve(children);
         }
 
