@@ -8,19 +8,21 @@
         nodes: [],
         currentModule: -1,
         hasCommonDS: false,
+        hasActualDS: false,
         treeRoot: null,
 
         update(data) {
             this.nodes         = Array.isArray(data.nodes) ? data.nodes : [];
             this.currentModule = Number.isInteger(data.currentModule) ? data.currentModule : -1;
             this.hasCommonDS   = !!data.hasCommonDS;
-            this.treeRoot      = TreeBuilder.build(this.nodes, this.hasCommonDS);
+            this.hasActualDS   = !!data.hasActualDS;
+            this.treeRoot      = TreeBuilder.build(this.nodes, this.hasCommonDS, this.hasActualDS);
         }
     };
 
     // ── Pre-order list → multi-way tree ──────────────────────────────────────
     const TreeBuilder = {
-        build(nodes, hasCommonDS) {
+        build(nodes, hasCommonDS, hasActualDS) {
             if (!nodes || nodes.length === 0) return null;
             let cursor = 0;
             const walk = () => {
@@ -41,14 +43,25 @@
                 return node;
             };
             const root = walk();
-            // Inject common DS as the first child of root when available
+            // Inject common DS as the first child of root when available.
+            // Inject actual DS as its sole child when the promoted file exists.
             if (root && hasCommonDS) {
+                const commonDSChildren = [];
+                if (hasActualDS) {
+                    commonDSChildren.push({
+                        originalIndex: -2,
+                        nodeType: 'actual-ds',
+                        title: '实际数据结构',
+                        desc: '由通用数据结构转换生成的语言实现代码',
+                        children: []
+                    });
+                }
                 root.children.unshift({
                     originalIndex: -1,
                     nodeType: 'common-ds',
                     title: '通用数据结构',
                     desc: '各模块间传递的共用数据结构，含字段语义描述与使用模块说明',
-                    children: []
+                    children: commonDSChildren
                 });
             }
             return root;
@@ -103,7 +116,9 @@
                 .attr('transform', d => `translate(${d.x - NW / 2}, ${d.y})`)
                 .on('click', (event, d) => {
                     event.stopPropagation();
-                    if (d.data.originalIndex === -1) {
+                    if (d.data.originalIndex === -2) {
+                        vscode.postMessage({ type: 'executeCommand', commandId: 'openActualDS', payload: {} });
+                    } else if (d.data.originalIndex === -1) {
                         vscode.postMessage({ type: 'executeCommand', commandId: 'openCommonDS', payload: {} });
                     } else if (typeof onNodeClick === 'function') {
                         onNodeClick(d.data.originalIndex);
@@ -150,6 +165,7 @@
                 State.currentModule,
                 idx => vscode.postMessage({ type: 'executeCommand', commandId: 'selectModule', payload: { index: idx } })
             );
+
         });
     }
 

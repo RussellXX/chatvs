@@ -269,8 +269,8 @@ export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<Desig
             return new vscode.ThemeIcon(iconName, new vscode.ThemeColor('charts.blue'));
         }
         if (element instanceof RequirementNode) return new vscode.ThemeIcon('checklist', new vscode.ThemeColor('charts.yellow'));
-        if (element instanceof CommonDataStructureNode) return new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.red'));
-        if (element instanceof ActualDataStructureNode) return new vscode.ThemeIcon('symbol-class', new vscode.ThemeColor('charts.green'));
+        if (element instanceof CommonDataStructureNode) return new vscode.ThemeIcon('database', new vscode.ThemeColor('charts.orange'));
+        if (element instanceof ActualDataStructureNode) return new vscode.ThemeIcon('symbol-class', new vscode.ThemeColor('charts.red'));
         throw new Error('Unexpected node type for icon path retrieval.');
     }
 
@@ -284,17 +284,20 @@ export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<Desig
             const children: DesignmentTreeNode[] = [...(element.children ?? [])];
 
             const commonDSPath = path.join(element.absolutePath, 'common_data_structures.json');
-            if (fs.existsSync(commonDSPath)) {
+            const hasCommonDS = fs.existsSync(commonDSPath);
+            if (hasCommonDS) {
                 children.unshift(new CommonDataStructureNode(element));
             }
 
-            // Inject actual data structure node when the promoted file exists in codes dir.
+            // Inject actual data structure node right after CommonDS (index 1 when
+            // CommonDS is present, otherwise index 0) so it appears near the top.
             try {
                 const projectName = path.basename(element.absolutePath);
                 const realCodeDir = path.join(getCodesPath(), projectName);
                 const dsPath = actualDSRealPath(realCodeDir, 'python');
                 if (fs.existsSync(dsPath)) {
-                    children.push(new ActualDataStructureNode(element, dsPath));
+                    const insertAt = hasCommonDS ? 1 : 0;
+                    children.splice(insertAt, 0, new ActualDataStructureNode(element, dsPath));
                 }
             } catch { /* settings not configured; skip silently */ }
 

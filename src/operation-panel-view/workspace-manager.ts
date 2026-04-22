@@ -34,10 +34,25 @@ import {
     readJsonDraftFirst,
 } from './draft-overlay';
 import { CommonDSManager } from './common-ds-manager';
-import { generateActualDS } from './actual-ds-generator';
+import { generateActualDS, actualDSStagingPath, actualDSRealPath } from './actual-ds-generator';
 import * as Diff from 'diff';
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+/** Recursively copy src into dst, creating directories as needed.
+ *  Uses copyFileSync + mkdirSync so it works on all Node.js versions. */
+function copyDirSync(src: string, dst: string): void {
+    fs.mkdirSync(dst, { recursive: true });
+    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+        const srcPath = path.join(src, entry.name);
+        const dstPath = path.join(dst, entry.name);
+        if (entry.isDirectory()) {
+            copyDirSync(srcPath, dstPath);
+        } else {
+            fs.copyFileSync(srcPath, dstPath);
+        }
+    }
+}
 
 function appendCustomPrompt(userPrompt: string, customPrompt: string): string {
     const trimmed = (customPrompt || '').trim();
@@ -351,10 +366,11 @@ export class WorkspaceManager {
 
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
-            title: '正在局部精化...',
+            title: '',
             cancellable: false
         }, async progress => {
             try {
+                progress.report({ message: '正在局部精化...' });
                 const selection = editor.selection;
                 const fileContent = editor.document.getText();
                 const selectedCode = editor.document.getText(selection);
@@ -430,36 +446,55 @@ export class WorkspaceManager {
 
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
-            title: '正在生成代码...',
+            title: '',
             cancellable: false
         }, async progress => {
             try {
                 const stagingRoot = this.codesStagingDir(projectPath);
                 const topoIdx = this.leafOrder.indexOf(nodeIndex);
 
-                // Phase 1: first-module setup — project scaffold + data structure file.
+                // Phase 1: first-module setup — project scaffold + data structure files.
                 // Must complete before building the code prompt so that data_structures.py
                 // is already in staging when the prompt reads it.
                 if (topoIdx === 0) {
-                    progress.report({ message: '正在初始化代码项目...' });
                     const { initialProject } = await import('../tools/project-initializer.js');
                     await initialProject(stagingRoot, language);
 
+                    // Generate common DS if not yet available (e.g. user skipped refine).
+                    if (!this._commonDS.exists(projectPath)) {
+                        progress.report({ message: '正在提取通用数据结构...' });
+                        const ongoingPath = this.resolveOngoingPath(projectPath);
+                        await this._commonDS.generate(projectPath, ongoingPath);
+                        this.postUpdate();
+                    }
+
                     if (this._commonDS.exists(projectPath)) {
-                        progress.report({ message: '正在生成数据结构定义...' });
+                        progress.report({ message: '正在生成实际数据结构...' });
                         const commonDSContent = fs.readFileSync(
                             this._commonDS.draftFirstPath(projectPath), 'utf8'
                         );
                         await generateActualDS(stagingRoot, commonDSContent, language, this.context);
+                        this.postUpdate(); // reveal the actual-ds node in the design tree immediately
                     }
                 }
 
-                // Phase 2: generate module code (prompt reads data_structures.py from staging).
+                // Phase 2: generate module code.
+                // For topoIdx === 0, data_structures.py was just written to stagingRoot.
+                // For topoIdx > 0, it was promoted to realCodeDir by a prior confirm —
+                // stagingRoot no longer has it, so fall back to realCodeDir.
+                let dsRoot = stagingRoot;
+                if (topoIdx > 0 && !fs.existsSync(actualDSStagingPath(stagingRoot, language))) {
+                    try {
+                        dsRoot = path.join(settings.getCodesPath(), projectName);
+                    } catch (_) { /* settings not configured; DS will be absent from prompt */ }
+                }
+
+                progress.report({ message: '正在生成代码...' });
                 const lastEntry = history[history.length - 1];
                 const fileContent = fs.readFileSync(lastEntry.filePath, 'utf8');
                 const pseudoCount = history.filter(e => e.type === 'pseudo').length;
                 const prompt = await openaiHelper.getGenerateCodePrompt(
-                    fileContent, `粒度${pseudoCount}`, language, modulePath, stagingRoot
+                    fileContent, `粒度${pseudoCount}`, language, modulePath, dsRoot
                 );
                 const userPrompt = appendCustomPrompt(prompt.user, customPrompt);
                 const raw = await openaiHelper.callOpenAIForJSON(prompt.system, userPrompt);
@@ -501,16 +536,18 @@ export class WorkspaceManager {
 
         const projectAbs = this.projectRoot.absolutePath;
         const stagingDir = this.codesStagingDir(projectAbs);
-        const realCodeDir = path.join(settings.getCodesPath(), path.basename(projectAbs));
+        let realCodeDir = '';
 
         try {
+            realCodeDir = path.join(settings.getCodesPath(), path.basename(projectAbs));
+
             // Promote generated code staging to the real codes directory first,
             // so that promoteDraft() does not copy it into projectAbs.
+            // Merge (not replace): staging files overwrite existing, but files
+            // already in realCodeDir (e.g. data_structures.py from a prior
+            // confirm) are preserved.
             if (fs.existsSync(stagingDir)) {
-                if (fs.existsSync(realCodeDir)) {
-                    fs.rmSync(realCodeDir, { recursive: true, force: true });
-                }
-                fs.cpSync(stagingDir, realCodeDir, { recursive: true });
+                copyDirSync(stagingDir, realCodeDir);
                 fs.rmSync(stagingDir, { recursive: true, force: true });
             }
             promoteDraft(projectAbs);
@@ -560,6 +597,25 @@ export class WorkspaceManager {
         if (fs.existsSync(filePath)) {
             await this.openInEditor(filePath);
         }
+    }
+
+    /** Open the language-specific data structure file (e.g. data_structures.py) in the editor.
+     *  Follows draft-first: prefers the staged copy when it exists. */
+    async openActualDS(): Promise<void> {
+        if (!this.projectRoot) return;
+        try {
+            const projectAbs = this.projectRoot.absolutePath;
+            const stagingPath = actualDSStagingPath(this.codesStagingDir(projectAbs), 'python');
+            if (fs.existsSync(stagingPath)) {
+                await this.openInEditor(stagingPath);
+                return;
+            }
+            const realCodeDir = path.join(settings.getCodesPath(), path.basename(projectAbs));
+            const filePath = actualDSRealPath(realCodeDir, 'python');
+            if (fs.existsSync(filePath)) {
+                await this.openInEditor(filePath);
+            }
+        } catch (_) {}
     }
 
     selectModule(nodeIndex: number): void {
@@ -958,8 +1014,21 @@ export class WorkspaceManager {
             isBusy: this.isBusy,
             hasCommonDS: this.projectRoot
                 ? this._commonDS.exists(this.projectRoot.absolutePath)
-                : false
+                : false,
+            hasActualDS: this._hasActualDS()
         };
+    }
+
+    /** Draft-first check: true if data_structures.py exists in staging OR in realCodeDir. */
+    private _hasActualDS(): boolean {
+        if (!this.projectRoot) return false;
+        try {
+            const projectAbs = this.projectRoot.absolutePath;
+            const stagingPath = actualDSStagingPath(this.codesStagingDir(projectAbs), 'python');
+            if (fs.existsSync(stagingPath)) return true;
+            const realCodeDir = path.join(settings.getCodesPath(), path.basename(projectAbs));
+            return fs.existsSync(actualDSRealPath(realCodeDir, 'python'));
+        } catch { return false; }
     }
 }
 

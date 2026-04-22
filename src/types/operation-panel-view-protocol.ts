@@ -22,6 +22,7 @@ export interface UpdateViewPayload {
     currentRefinementEntry: number;                   // index in current module's history, -1 = none
     isBusy: boolean;
     hasCommonDS: boolean;                             // whether common_data_structures.json exists (draft or real)
+    hasActualDS: boolean;                             // whether data_structures.py exists in the real codes dir
 }
 
 export interface UpdateViewMessage {
@@ -46,7 +47,8 @@ export type WebviewCommandId =
     | 'confirm'
     | 'selectRefinement'
     | 'showDesignTree'
-    | 'openCommonDS';
+    | 'openCommonDS'
+    | 'openActualDS';
 
 /**
  * Payload for divide / refine / generateCode commands.

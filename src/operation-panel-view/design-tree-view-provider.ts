@@ -48,6 +48,8 @@ export class DesignTreeViewProvider {
                 WorkspaceManager.getInstance().selectModule((payload as any)?.index ?? -1);
             } else if (commandId === 'openCommonDS') {
                 WorkspaceManager.getInstance().openCommonDS();
+            } else if (commandId === 'openActualDS') {
+                WorkspaceManager.getInstance().openActualDS();
             }
         });
 
