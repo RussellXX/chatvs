@@ -191,12 +191,12 @@ body {
 
 /* ─── Button bar ─────────────────────────────────────────────────────────── */
 .btn-bar {
-    flex-shrink: 0;
     display: flex;
     gap: 6px;
     padding: 6px 12px 8px;
     border-top: 1px solid var(--node-border);
     background: var(--vscode-editor-background);
+    margin: 2px 0 4px;
 }
 
 .action-btn {
@@ -217,25 +217,68 @@ body {
 .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Split button group (精化 + ▾) */
-.split-btn-group {
+.refine-controls {
     flex: 1;
-    max-width: 92px;
+    max-width: 184px;
     display: flex;
+    gap: 6px;
     position: relative;
 }
 
-.split-btn-group .refine-btn { flex: 1; border-radius: 3px 0 0 3px; }
-.split-btn-group .refine-arrow-btn {
-    flex: 0 0 20px;
-    padding: 4px 3px;
-    border-radius: 0 3px 3px 0;
-    border-left: 1px solid rgba(255,255,255,0.25);
+.refine-controls .refine-btn {
+    flex: 0 0 72px;
+}
+
+.refine-select-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 8px;
+    border: 1px solid var(--node-border);
+    border-radius: 3px;
+    background: var(--vscode-dropdown-background, var(--node-leaf-bg));
+    color: var(--vscode-dropdown-foreground, var(--text-color));
+    cursor: pointer;
+    font-size: 11px;
+    font-family: var(--vscode-font-family);
+    transition: border-color 0.12s, background 0.12s, opacity 0.12s;
+}
+
+.refine-select-btn:hover {
+    border-color: var(--node-selected-outline);
+    background: var(--hover-bg);
+}
+
+.refine-select-btn:focus-visible {
+    outline: 1px solid var(--node-selected-outline);
+    outline-offset: -1px;
+    border-color: var(--node-selected-outline);
+}
+
+.refine-select-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.refine-select-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.refine-select-caret {
+    flex: 0 0 auto;
+    color: var(--title-color);
+    font-size: 10px;
 }
 
 .dropdown-menu {
     position: absolute;
     bottom: calc(100% + 4px);
-    left: 0;
+    left: 78px;
     right: 0;
     background: var(--vscode-menu-background, #2d2d30);
     border: 1px solid var(--node-border);
@@ -257,6 +300,11 @@ body {
 .dropdown-item:hover {
     background: var(--vscode-menu-selectionBackground, #094771);
     color: var(--vscode-menu-selectionForeground, #fff);
+}
+
+.dropdown-item.selected {
+    background: color-mix(in srgb, var(--active-bg) 58%, transparent);
+    color: var(--active-fg);
 }
 
 .confirm-btn {

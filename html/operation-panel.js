@@ -1,9 +1,6 @@
 (function () {
     'use strict';
 
-    // ==========================================================
-    // 1. VS Code 通信层
-    // ==========================================================
     const vscode = acquireVsCodeApi();
 
     const Messenger = {
@@ -15,35 +12,35 @@
         }
     };
 
-    // ==========================================================
-    // 2. 状态管理（单一数据源）
-    // ==========================================================
     const State = {
         nodes: [],
         leafOrder: [],
         currentModule: -1,
-        refinementHistories: {},   // Record<number, RefinementEntry[]>
+        refinementHistories: {},
         currentRefinementEntry: -1,
         isBusy: false,
 
         update(data) {
-            this.nodes              = Array.isArray(data.nodes)      ? data.nodes      : [];
-            this.leafOrder          = Array.isArray(data.leafOrder)  ? data.leafOrder  : [];
-            this.currentModule      = Number.isInteger(data.currentModule)         ? data.currentModule         : -1;
-            this.refinementHistories = (data.refinementHistories && typeof data.refinementHistories === 'object')
-                                       ? data.refinementHistories : {};
+            this.nodes = Array.isArray(data.nodes) ? data.nodes : [];
+            this.leafOrder = Array.isArray(data.leafOrder) ? data.leafOrder : [];
+            this.currentModule = Number.isInteger(data.currentModule) ? data.currentModule : -1;
+            this.refinementHistories =
+                (data.refinementHistories && typeof data.refinementHistories === 'object')
+                    ? data.refinementHistories
+                    : {};
             this.currentRefinementEntry = Number.isInteger(data.currentRefinementEntry)
-                                          ? data.currentRefinementEntry : -1;
-            this.isBusy             = !!data.isBusy;
+                ? data.currentRefinementEntry
+                : -1;
+            this.isBusy = !!data.isBusy;
         }
     };
 
-    // ==========================================================
-    // 3. 叶子拓扑顺序
-    // ==========================================================
     const LeafOrderView = {
         container: null,
-        init(id) { this.container = document.getElementById(id); },
+
+        init(id) {
+            this.container = document.getElementById(id);
+        },
 
         render(leafOrder, nodes, selectedIndex, onLeafClick) {
             this.container.innerHTML = '';
@@ -62,8 +59,7 @@
                 const chip = document.createElement('span');
                 chip.className = 'leaf-chip' + (nodeIdx === selectedIndex ? ' selected' : '');
                 chip.title = `${raw.title}\n${raw.desc || ''}`;
-                chip.innerHTML =
-                    `<span class="chip-index">${i + 1}.</span>${raw.title || '(未命名)'}`;
+                chip.innerHTML = `<span class="chip-index">${i + 1}.</span>${raw.title || '(未命名)'}`;
                 chip.addEventListener('click', () => {
                     if (typeof onLeafClick === 'function') onLeafClick(nodeIdx);
                 });
@@ -79,12 +75,12 @@
         }
     };
 
-    // ==========================================================
-    // 6. 精化历史序列
-    // ==========================================================
     const RefinementHistoryView = {
         container: null,
-        init(id) { this.container = document.getElementById(id); },
+
+        init(id) {
+            this.container = document.getElementById(id);
+        },
 
         render(moduleIndex, histories, selectedEntryIndex, onEntryClick) {
             this.container.innerHTML = '';
@@ -108,7 +104,6 @@
             }
 
             history.forEach((entry, i) => {
-                // Arrow between blocks
                 if (i > 0) {
                     const arrow = document.createElement('span');
                     arrow.className = 'refine-arrow';
@@ -134,35 +129,33 @@
         }
     };
 
-    // ==========================================================
-    // 6.5 自定义提示词输入
-    // ==========================================================
     const PromptInput = {
         el: null,
-        init(id) { this.el = document.getElementById(id); },
-        /** 读取并清空输入框（发送后调用） */
+
+        init(id) {
+            this.el = document.getElementById(id);
+        },
+
         consume() {
             if (!this.el) return '';
             const val = (this.el.value || '').trim();
             this.el.value = '';
             return val;
         },
+
         setDisabled(disabled) {
             if (this.el) this.el.disabled = !!disabled;
         }
     };
 
-    // ==========================================================
-    // 7. 选中控制
-    // ==========================================================
     const SelectionController = {
         selectModule(index) {
             Messenger.executeCommand('selectModule', { index });
-            // Optimistic local update — backend will confirm via updateView
             State.currentModule = index;
             State.currentRefinementEntry = -1;
             Renderer.renderAll();
         },
+
         selectRefinement(moduleIndex, entryIndex) {
             Messenger.executeCommand('selectRefinement', { moduleIndex, entryIndex });
             State.currentRefinementEntry = entryIndex;
@@ -170,9 +163,6 @@
         }
     };
 
-    // ==========================================================
-    // 8. 统一渲染
-    // ==========================================================
     const Renderer = {
         renderAll() {
             LeafOrderView.render(
@@ -191,28 +181,34 @@
         }
     };
 
-    // ==========================================================
-    // 9. 按钮栏
-    // ==========================================================
     const ButtonBar = {
         divideBtn: null,
         refineMainBtn: null,
-        refineArrowBtn: null,
+        refineDropdownBtn: null,
+        refineSelectedLabel: null,
         refineDropdown: null,
         confirmBtn: null,
+        selectedRefineAction: 'refine',
+        refineActionLabels: {
+            refine: '全局精化',
+            localRefine: '局部精化',
+            generateCode: '代码生成'
+        },
 
         init() {
             document.getElementById('show-tree-btn').addEventListener('click', () => {
                 Messenger.executeCommand('showDesignTree', {});
             });
 
-            this.divideBtn       = document.getElementById('divide-btn');
-            this.refineMainBtn   = document.getElementById('refine-main-btn');
-            this.refineArrowBtn  = document.getElementById('refine-dropdown-btn');
-            this.refineDropdown  = document.getElementById('refine-dropdown');
-            this.confirmBtn      = document.getElementById('confirm-btn');
+            this.divideBtn = document.getElementById('divide-btn');
+            this.refineMainBtn = document.getElementById('refine-main-btn');
+            this.refineDropdownBtn = document.getElementById('refine-dropdown-btn');
+            this.refineSelectedLabel = document.getElementById('refine-selected-label');
+            this.refineDropdown = document.getElementById('refine-dropdown');
+            this.confirmBtn = document.getElementById('confirm-btn');
 
-            // 拆分
+            this._syncRefineSelectionUi();
+
             this.divideBtn.addEventListener('click', () => {
                 Messenger.executeCommand('divide', {
                     index: State.currentModule,
@@ -220,90 +216,95 @@
                 });
             });
 
-            // 精化（主按钮 = 精化）
             this.refineMainBtn.addEventListener('click', () => {
-                Messenger.executeCommand('refine', {
+                Messenger.executeCommand(this.selectedRefineAction, {
                     index: State.currentModule,
                     customPrompt: PromptInput.consume()
                 });
             });
 
-            // 精化下拉箭头 — 切换菜单
-            this.refineArrowBtn.addEventListener('click', e => {
-                e.stopPropagation();
+            this.refineDropdownBtn.addEventListener('click', event => {
+                event.stopPropagation();
                 this.refineDropdown.classList.toggle('hidden');
+                this.refineDropdownBtn.setAttribute(
+                    'aria-expanded',
+                    this.refineDropdown.classList.contains('hidden') ? 'false' : 'true'
+                );
             });
 
-            // 下拉菜单选项：refine(全局精化) / localRefine(局部精化) / generateCode(代码生成)
             this.refineDropdown.querySelectorAll('.dropdown-item').forEach(item => {
                 item.addEventListener('click', () => {
                     const action = item.dataset.action;
-                    this.refineDropdown.classList.add('hidden');
-                    if (action === 'refine' || action === 'localRefine' || action === 'generateCode') {
-                        Messenger.executeCommand(action, {
-                            index: State.currentModule,
-                            customPrompt: PromptInput.consume()
-                        });
+                    if (action !== 'refine' && action !== 'localRefine' && action !== 'generateCode') {
+                        return;
                     }
+                    this.selectedRefineAction = action;
+                    this._syncRefineSelectionUi();
+                    this.refineDropdown.classList.add('hidden');
+                    this.refineDropdownBtn.setAttribute('aria-expanded', 'false');
                 });
             });
 
-            // 确认
             this.confirmBtn.addEventListener('click', () => {
                 Messenger.executeCommand('confirm', {});
             });
 
-            // 点击面板其他地方收起下拉菜单
             document.addEventListener('click', () => {
                 this.refineDropdown.classList.add('hidden');
+                this.refineDropdownBtn.setAttribute('aria-expanded', 'false');
             });
         },
 
         update() {
             const busy = State.isBusy;
-            const mi   = State.currentModule;
+            const mi = State.currentModule;
 
-            // 当 isBusy 时所有操作按钮与输入框均不可用
-            this.divideBtn.disabled      = busy;
-            this.refineMainBtn.disabled  = busy;
-            this.refineArrowBtn.disabled = busy;
-            this.confirmBtn.disabled     = busy;
+            this.divideBtn.disabled = busy;
+            this.refineMainBtn.disabled = busy;
+            this.refineDropdownBtn.disabled = busy;
+            this.confirmBtn.disabled = busy;
             PromptInput.setDisabled(busy);
 
             if (!busy) {
-                // 拆分：只对选中节点有效（根节点 or 叶子模块节点）
-                const nodeData  = mi >= 0 ? State.nodes[mi] : null;
+                const nodeData = mi >= 0 ? State.nodes[mi] : null;
                 const isLeafModule = nodeData && nodeData.nodeType === 'leaf'
                     && State.leafOrder.includes(mi);
                 const isUndividedRoot = nodeData && nodeData.nodeType === 'root'
                     && State.leafOrder.length === 0;
                 this.divideBtn.disabled = !(isLeafModule || isUndividedRoot);
 
-                // 精化 / 代码生成：只对当前可操作的叶子模块有效
                 const history = mi >= 0 ? State.refinementHistories[mi] : null;
                 const hasCode = history && history.some(e => e.type === 'code');
                 const canOperate = isLeafModule && !hasCode && this._canOperate(mi);
-                this.refineMainBtn.disabled  = !canOperate;
-                this.refineArrowBtn.disabled = !canOperate;
+                this.refineMainBtn.disabled = !canOperate;
+                this.refineDropdownBtn.disabled = !canOperate;
             }
         },
 
-        // 检查前置模块是否都已生成代码（与后端逻辑保持一致）
+        _syncRefineSelectionUi() {
+            if (this.refineSelectedLabel) {
+                this.refineSelectedLabel.textContent =
+                    this.refineActionLabels[this.selectedRefineAction] || this.refineActionLabels.refine;
+            }
+
+            if (!this.refineDropdown) return;
+            this.refineDropdown.querySelectorAll('.dropdown-item').forEach(item => {
+                item.classList.toggle('selected', item.dataset.action === this.selectedRefineAction);
+            });
+        },
+
         _canOperate(nodeIndex) {
             const pos = State.leafOrder.indexOf(nodeIndex);
             if (pos <= 0) return true;
             for (let i = 0; i < pos; i++) {
                 const prev = State.leafOrder[i];
-                const h = State.refinementHistories[prev];
-                if (!h || !h.some(e => e.type === 'code')) return false;
+                const history = State.refinementHistories[prev];
+                if (!history || !history.some(e => e.type === 'code')) return false;
             }
             return true;
         }
     };
 
-    // ==========================================================
-    // 10. 消息监听
-    // ==========================================================
     function bindMessageHandler() {
         window.addEventListener('message', event => {
             const msg = event.data;
@@ -313,9 +314,6 @@
         });
     }
 
-    // ==========================================================
-    // 11. 启动
-    // ==========================================================
     function main() {
         LeafOrderView.init('leaf-order-root');
         RefinementHistoryView.init('refinement-history-root');
