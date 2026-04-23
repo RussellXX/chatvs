@@ -71,13 +71,37 @@
     // ── D3 tree view ─────────────────────────────────────────────────────────
     const TreeView = {
         container: null,
+        stage: null,
+        canvas: null,
+        zoomInButton: null,
+        zoomOutButton: null,
+        baseWidth: 0,
+        baseHeight: 0,
+        scale: 1,
+        MIN_SCALE: 0.6,
+        MAX_SCALE: 1.8,
+        BUTTON_STEP: 0.1,
+        WHEEL_STEP: 0.02,
         NODE_W: 180, NODE_H: 88, H_GAP: 32, V_GAP: 60, PADDING: 18,
 
-        init(containerId) { this.container = document.getElementById(containerId); },
+        init(containerId) {
+            this.container = document.getElementById('tree-scroll');
+            this.stage = document.getElementById('tree-stage');
+            this.canvas = document.getElementById('tree-canvas');
+            this.zoomInButton = document.getElementById('zoom-in-btn');
+            this.zoomOutButton = document.getElementById('zoom-out-btn');
+            this._bindEvents();
+            this._updateZoomButtons();
+        },
 
         render(rootData, selectedIndex, onNodeClick) {
-            this.container.innerHTML = '';
-            if (!rootData) return;
+            this.canvas.innerHTML = '';
+            this.baseWidth = 0;
+            this.baseHeight = 0;
+            if (!rootData) {
+                this._applyZoom();
+                return;
+            }
 
             const root = d3.hierarchy(rootData);
             const layout = d3.tree().nodeSize([this.NODE_W + this.H_GAP, this.NODE_H + this.V_GAP]);
@@ -145,7 +169,53 @@
                 d.data.title + (d.data.desc ? '\n\n' + d.data.desc : '')
             );
 
-            this.container.appendChild(svg.node());
+            this.baseWidth = svgW;
+            this.baseHeight = svgH;
+            this.canvas.appendChild(svg.node());
+            this._applyZoom();
+        },
+
+        _bindEvents() {
+            this.zoomInButton?.addEventListener('click', () => this._changeZoom(this.BUTTON_STEP));
+            this.zoomOutButton?.addEventListener('click', () => this._changeZoom(-this.BUTTON_STEP));
+            this.container?.addEventListener('wheel', event => {
+                if (!event.ctrlKey) return;
+                event.preventDefault();
+                this._changeZoom(event.deltaY < 0 ? this.WHEEL_STEP : -this.WHEEL_STEP);
+            }, { passive: false });
+        },
+
+        _changeZoom(delta) {
+            const nextScale = this._clampScale(this.scale + delta);
+            if (Math.abs(nextScale - this.scale) < 0.0001) return;
+            this.scale = nextScale;
+            this._applyZoom();
+        },
+
+        _applyZoom() {
+            const width = this.baseWidth > 0 ? Math.ceil(this.baseWidth * this.scale) : 0;
+            const height = this.baseHeight > 0 ? Math.ceil(this.baseHeight * this.scale) : 0;
+
+            this.stage.style.width = width > 0 ? `${width}px` : '100%';
+            this.stage.style.height = height > 0 ? `${height}px` : '100%';
+            this.canvas.style.transform = `scale(${this.scale})`;
+            this.canvas.style.width = this.baseWidth > 0 ? `${this.baseWidth}px` : '0';
+            this.canvas.style.height = this.baseHeight > 0 ? `${this.baseHeight}px` : '0';
+            this._updateZoomButtons();
+        },
+
+        _clampScale(scale) {
+            return Math.max(this.MIN_SCALE, Math.min(this.MAX_SCALE, scale));
+        },
+
+        _updateZoomButtons() {
+            const hasContent = this.baseWidth > 0 && this.baseHeight > 0;
+            if (this.zoomInButton) {
+                this.zoomInButton.disabled = !hasContent || this.scale >= this.MAX_SCALE - 0.001;
+            }
+            if (this.zoomOutButton) {
+                this.zoomOutButton.disabled = !hasContent || this.scale <= this.MIN_SCALE + 0.001;
+            }
         },
 
         _esc(s) {

@@ -9,7 +9,31 @@
 </head>
 
 <body>
-    <div id="tree-root" class="tree-root"></div>
+    <div id="tree-root" class="tree-root">
+        <div class="tree-toolbar-zone" aria-hidden="true"></div>
+        <div class="tree-toolbar" aria-label="缩放工具">
+            <button type="button" id="zoom-in-btn" class="tree-toolbar-btn" title="放大" aria-label="放大">
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="6.5" cy="6.5" r="4.25"></circle>
+                    <path d="M9.75 9.75L13.25 13.25"></path>
+                    <path d="M6.5 4.5V8.5"></path>
+                    <path d="M4.5 6.5H8.5"></path>
+                </svg>
+            </button>
+            <button type="button" id="zoom-out-btn" class="tree-toolbar-btn" title="缩小" aria-label="缩小">
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <circle cx="6.5" cy="6.5" r="4.25"></circle>
+                    <path d="M9.75 9.75L13.25 13.25"></path>
+                    <path d="M4.5 6.5H8.5"></path>
+                </svg>
+            </button>
+        </div>
+        <div id="tree-scroll" class="tree-scroll">
+            <div id="tree-stage" class="tree-stage">
+                <div id="tree-canvas" class="tree-canvas"></div>
+            </div>
+        </div>
+    </div>
 
     <script src="{{d3Uri}}"></script>
     <script src="{{scriptUri}}"></script>
