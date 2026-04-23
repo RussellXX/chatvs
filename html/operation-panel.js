@@ -18,6 +18,7 @@
         currentModule: -1,
         refinementHistories: {},
         currentRefinementEntry: -1,
+        moduleStatuses: {},
         isBusy: false,
 
         update(data) {
@@ -31,6 +32,10 @@
             this.currentRefinementEntry = Number.isInteger(data.currentRefinementEntry)
                 ? data.currentRefinementEntry
                 : -1;
+            this.moduleStatuses =
+                (data.moduleStatuses && typeof data.moduleStatuses === 'object')
+                    ? data.moduleStatuses
+                    : {};
             this.isBusy = !!data.isBusy;
         }
     };
@@ -187,12 +192,13 @@
         refineDropdownBtn: null,
         refineSelectedLabel: null,
         refineDropdown: null,
+        generateBtn: null,
+        rollbackBtn: null,
         confirmBtn: null,
         selectedRefineAction: 'refine',
         refineActionLabels: {
             refine: '全局精化',
-            localRefine: '局部精化',
-            generateCode: '代码生成'
+            localRefine: '局部精化'
         },
 
         init() {
@@ -205,6 +211,8 @@
             this.refineDropdownBtn = document.getElementById('refine-dropdown-btn');
             this.refineSelectedLabel = document.getElementById('refine-selected-label');
             this.refineDropdown = document.getElementById('refine-dropdown');
+            this.generateBtn = document.getElementById('generate-btn');
+            this.rollbackBtn = document.getElementById('rollback-btn');
             this.confirmBtn = document.getElementById('confirm-btn');
 
             this._syncRefineSelectionUi();
@@ -223,6 +231,19 @@
                 });
             });
 
+            this.generateBtn.addEventListener('click', () => {
+                Messenger.executeCommand('generateCode', {
+                    index: State.currentModule,
+                    customPrompt: PromptInput.consume()
+                });
+            });
+
+            this.rollbackBtn.addEventListener('click', () => {
+                Messenger.executeCommand('rollbackRefinement', {
+                    index: State.currentModule
+                });
+            });
+
             this.refineDropdownBtn.addEventListener('click', event => {
                 event.stopPropagation();
                 this.refineDropdown.classList.toggle('hidden');
@@ -235,7 +256,7 @@
             this.refineDropdown.querySelectorAll('.dropdown-item').forEach(item => {
                 item.addEventListener('click', () => {
                     const action = item.dataset.action;
-                    if (action !== 'refine' && action !== 'localRefine' && action !== 'generateCode') {
+                    if (action !== 'refine' && action !== 'localRefine') {
                         return;
                     }
                     this.selectedRefineAction = action;
@@ -262,6 +283,8 @@
             this.divideBtn.disabled = busy;
             this.refineMainBtn.disabled = busy;
             this.refineDropdownBtn.disabled = busy;
+            this.generateBtn.disabled = busy;
+            this.rollbackBtn.disabled = busy;
             this.confirmBtn.disabled = busy;
             PromptInput.setDisabled(busy);
 
@@ -276,8 +299,30 @@
                 const history = mi >= 0 ? State.refinementHistories[mi] : null;
                 const hasCode = history && history.some(e => e.type === 'code');
                 const canOperate = isLeafModule && !hasCode && this._canOperate(mi);
-                this.refineMainBtn.disabled = !canOperate;
-                this.refineDropdownBtn.disabled = !canOperate;
+
+                const historyLen = Array.isArray(history) ? history.length : 0;
+                const selectedEntryIndex = Number.isInteger(State.currentRefinementEntry)
+                    ? State.currentRefinementEntry
+                    : -1;
+                const hasSelectedEntry = selectedEntryIndex >= 0 && selectedEntryIndex < historyLen;
+                const isViewingLast = hasSelectedEntry && selectedEntryIndex === historyLen - 1;
+
+                const moduleStatus = State.moduleStatuses[String(mi)] || State.moduleStatuses[mi] || 'pending';
+
+                const showRefineAndGenerate =
+                    isLeafModule && isViewingLast && moduleStatus === 'inProgress';
+                const showRollbackOnly =
+                    isLeafModule && hasSelectedEntry && (!isViewingLast || moduleStatus === 'completed' || moduleStatus === 'pending');
+
+                this.refineMainBtn.style.display = showRefineAndGenerate ? '' : 'none';
+                this.refineDropdownBtn.style.display = showRefineAndGenerate ? '' : 'none';
+                this.generateBtn.style.display = showRefineAndGenerate ? '' : 'none';
+                this.rollbackBtn.style.display = (showRefineAndGenerate || showRollbackOnly) ? '' : 'none';
+
+                this.refineMainBtn.disabled = !showRefineAndGenerate || !canOperate;
+                this.refineDropdownBtn.disabled = !showRefineAndGenerate || !canOperate;
+                this.generateBtn.disabled = !showRefineAndGenerate || !canOperate;
+                this.rollbackBtn.disabled = !isLeafModule || !hasSelectedEntry;
             }
         },
 
@@ -289,7 +334,9 @@
 
             if (!this.refineDropdown) return;
             this.refineDropdown.querySelectorAll('.dropdown-item').forEach(item => {
-                item.classList.toggle('selected', item.dataset.action === this.selectedRefineAction);
+                const selected = item.dataset.action === this.selectedRefineAction;
+                item.classList.toggle('selected', selected);
+                item.setAttribute('aria-selected', selected ? 'true' : 'false');
             });
         },
 

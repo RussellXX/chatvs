@@ -28,15 +28,17 @@
                     <span id="refine-selected-label" class="refine-select-label">全局精化</span>
                     <span class="refine-select-caret" aria-hidden="true">▼</span>
                 </button>
-                <div id="refine-dropdown" class="dropdown-menu hidden" role="listbox">
-                    <div class="dropdown-item selected" data-action="refine">全局精化</div>
-                    <div class="dropdown-item" data-action="localRefine">局部精化</div>
-                    <div class="dropdown-item" data-action="generateCode">代码生成</div>
+                <div id="refine-dropdown" class="dropdown-menu hidden" role="listbox" aria-label="精化方式">
+                    <div class="dropdown-item selected" data-action="refine" role="option" aria-selected="true">全局精化</div>
+                    <div class="dropdown-item" data-action="localRefine" role="option" aria-selected="false">局部精化</div>
                 </div>
             </div>
 
+            <button type="button" id="generate-btn" class="action-btn generate-btn">生成代码</button>
+            <button type="button" id="rollback-btn" class="action-btn rollback-btn">回退粒度</button>
+
             <button type="button" id="confirm-btn" class="action-btn confirm-btn">保存工作区</button>
-            <div style="flex: 1"></div>
+            <div class="btn-spacer"></div>
             <button type="button" id="show-tree-btn" class="show-tree-btn" title="显示设计树">设计树</button>
         </div>
 

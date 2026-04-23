@@ -11,7 +11,11 @@ export interface RefinementEntry {
     label: string;      // "模块规约" | "粒度1" | "粒度2" | ... | "实际代码"
     filePath: string;   // absolute path — opened in editor on click
     type: 'spec' | 'pseudo' | 'code';
+    active?: boolean;
+    highlightRange?: [number, number][];
 }
+
+export type ModuleProgressStatus = 'pending' | 'inProgress' | 'completed';
 
 // 后端 → 前端 消息
 export interface UpdateViewPayload {
@@ -20,6 +24,7 @@ export interface UpdateViewPayload {
     currentModule: number;                            // -1 = none
     refinementHistories: Record<number, RefinementEntry[]>; // key = node index
     currentRefinementEntry: number;                   // index in current module's history, -1 = none
+    moduleStatuses: Record<number, ModuleProgressStatus>;
     isBusy: boolean;
     hasCommonDS: boolean;                             // whether common_data_structures.json exists (draft or real)
     hasActualDS: boolean;                             // whether data_structures.py exists in the real codes dir
@@ -44,6 +49,7 @@ export type WebviewCommandId =
     | 'refine'          // 全局精化（保持原命名以向后兼容）
     | 'localRefine'     // 局部精化（基于编辑器选区）
     | 'generateCode'
+    | 'rollbackRefinement'
     | 'confirm'
     | 'selectRefinement'
     | 'showDesignTree'

@@ -68,6 +68,10 @@ export class OperationPanelViewProvider implements vscode.WebviewViewProvider {
                     await wm.generateCode(p?.index ?? -1, customPrompt);
                     break;
 
+                case 'rollbackRefinement':
+                    await wm.rollbackRefinement(p?.index ?? -1);
+                    break;
+
                 case 'confirm':
                     await wm.confirm();
                     break;

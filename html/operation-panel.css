@@ -45,6 +45,7 @@ body {
     color: var(--title-color);
     padding: 6px 12px 2px;
     flex-shrink: 0;
+    -webkit-user-select: none;
     user-select: none;
 }
 
@@ -73,6 +74,7 @@ body {
     color: var(--text-color);
     font-size: 11px;
     cursor: pointer;
+    -webkit-user-select: none;
     user-select: none;
     white-space: nowrap;
     transition: border-color 0.12s;
@@ -95,6 +97,7 @@ body {
 .leaf-arrow {
     color: var(--title-color);
     font-size: 11px;
+    -webkit-user-select: none;
     user-select: none;
 }
 
@@ -136,6 +139,7 @@ body {
     color: var(--text-color);
     font-size: 11.5px;
     cursor: pointer;
+    -webkit-user-select: none;
     user-select: none;
     white-space: nowrap;
     transition: border-color 0.12s;
@@ -155,6 +159,7 @@ body {
     color: var(--title-color);
     font-size: 13px;
     padding: 0 5px;
+    -webkit-user-select: none;
     user-select: none;
     align-self: center;
     flex-shrink: 0;
@@ -201,7 +206,7 @@ body {
 
 .action-btn {
     flex: 1;
-    max-width: 72px;
+    max-width: 78px;
     padding: 4px 8px;
     border: none;
     border-radius: 3px;
@@ -219,7 +224,7 @@ body {
 /* Split button group (精化 + ▾) */
 .refine-controls {
     flex: 1;
-    max-width: 184px;
+    max-width: 188px;
     display: flex;
     gap: 6px;
     position: relative;
@@ -308,10 +313,20 @@ body {
 }
 
 .confirm-btn {
-    max-width: 88px;
+    max-width: 96px;
     white-space: nowrap;
     background: #555558;
     color: #e0e0e0;
+}
+
+.generate-btn,
+.rollback-btn {
+    max-width: 82px;
+    white-space: nowrap;
+}
+
+.btn-spacer {
+    flex: 1;
 }
 
 .confirm-btn:hover { background: #636366; }

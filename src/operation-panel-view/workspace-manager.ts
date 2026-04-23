@@ -19,7 +19,8 @@ import {
     NodeType,
     TreeNodeData,
     RefinementEntry,
-    UpdateViewPayload
+    UpdateViewPayload,
+    ModuleProgressStatus
 } from '../types/operation-panel-view-protocol';
 import { loadRefinementHistory, saveRefinementHistory } from './workspace-persistence';
 import { cleanLLMResponse, getHumanJsonPath, LineData } from './granularity-view-utils';
@@ -125,6 +126,7 @@ export class WorkspaceManager {
     private currentModule = -1;
     private currentRefinementEntry = -1;
     private refinementHistories: Record<number, RefinementEntry[]> = {};
+    private moduleStatuses: Record<number, ModuleProgressStatus> = {};
     private isBusy = false;
     private _suppressHistoryPaths: Set<string> = new Set();
 
@@ -161,6 +163,7 @@ export class WorkspaceManager {
         this.currentModule = -1;
         this.currentRefinementEntry = -1;
         this.refinementHistories = {};
+        this.moduleStatuses = {};
         this.isBusy = false;
         this._commonDS.reset();
 
@@ -315,6 +318,7 @@ export class WorkspaceManager {
                 const pseudoCount = history.filter(e => e.type === 'pseudo').length;
                 history.push({ label: `粒度${pseudoCount + 1}`, filePath: outputPath, type: 'pseudo' });
                 this.currentRefinementEntry = history.length - 1;
+                this.markOnlyActive(history, this.currentRefinementEntry);
 
                 await this.openInEditor(outputPath);
                 progress.report({ message: '精化完成！' });
@@ -409,6 +413,7 @@ export class WorkspaceManager {
                 const pseudoCount = history.filter(e => e.type === 'pseudo').length;
                 history.push({ label: `粒度${pseudoCount + 1}`, filePath: outputPath, type: 'pseudo' });
                 this.currentRefinementEntry = history.length - 1;
+                this.markOnlyActive(history, this.currentRefinementEntry);
 
                 await this.openInEditor(outputPath);
                 progress.report({ message: '局部精化完成！' });
@@ -518,6 +523,7 @@ export class WorkspaceManager {
 
                 history.push({ label: '实际代码', filePath: generatedFilePath, type: 'code' });
                 this.currentRefinementEntry = history.length - 1;
+                this.markOnlyActive(history, this.currentRefinementEntry);
 
                 await this.openInEditor(generatedFilePath);
                 progress.report({ message: '代码生成成功！' });
@@ -529,6 +535,93 @@ export class WorkspaceManager {
 
         this.isBusy = false;
         this.postUpdate();
+    }
+
+    async rollbackRefinement(nodeIndex: number): Promise<void> {
+        if (this.isBusy || !this.projectRoot) return;
+
+        const moduleIndex = Number.isInteger(nodeIndex) && nodeIndex >= 0
+            ? nodeIndex
+            : this.currentModule;
+        if (moduleIndex < 0 || !this.leafOrder.includes(moduleIndex)) {
+            vscode.window.showWarningMessage('请先选中一个叶子模块。');
+            return;
+        }
+
+        const targetIndex = this.currentRefinementEntry;
+        if (targetIndex < 0) {
+            vscode.window.showWarningMessage('您还没有选择要回退到的伪代码记录');
+            return;
+        }
+
+        const currentHistory = this.refinementHistories[moduleIndex];
+        if (!currentHistory || currentHistory.length === 0) {
+            vscode.window.showWarningMessage('读取粒度历史失败，无法执行回退。');
+            return;
+        }
+        if (targetIndex >= currentHistory.length) {
+            vscode.window.showWarningMessage('当前选中的历史记录无效，无法回退。');
+            return;
+        }
+
+        const projectAbs = this.projectRoot.absolutePath;
+        const projectName = path.basename(projectAbs);
+        const currentPos = this.leafOrder.indexOf(moduleIndex);
+        const isFirstLeaf = currentPos === 0;
+        const isLastLeaf = currentPos === this.leafOrder.length - 1;
+
+        const removedOfCurrent = currentHistory.slice(targetIndex + 1);
+        const removedCurrentHasCode = removedOfCurrent.some(e => e.type === 'code');
+
+        this.isBusy = true;
+        this.postUpdate();
+
+        try {
+            await this.rollbackSingleModuleToIndex(moduleIndex, targetIndex);
+
+            for (let i = currentPos + 1; i < this.leafOrder.length; i++) {
+                const nextModuleIndex = this.leafOrder[i];
+                const removedHasCode = await this.rollbackSingleModuleToIndex(nextModuleIndex, 0);
+                if (removedHasCode && i === this.leafOrder.length - 1) {
+                    await this.removeLaunchConfigSafe(projectName);
+                }
+            }
+
+            if (removedCurrentHasCode && isFirstLeaf) {
+                const codeProjectDir = path.join(settings.getCodesPath(), projectName);
+                if (fs.existsSync(codeProjectDir)) {
+                    fs.rmSync(codeProjectDir, { recursive: true, force: true });
+                }
+                const stagingDir = this.codesStagingDir(projectAbs);
+                if (fs.existsSync(stagingDir)) {
+                    fs.rmSync(stagingDir, { recursive: true, force: true });
+                }
+                this._commonDS.clearDraft(projectAbs);
+                DesignmentTreeDataProvider.getInstance().refresh(undefined);
+            }
+
+            if (removedCurrentHasCode && isLastLeaf) {
+                await this.removeLaunchConfigSafe(projectName);
+            }
+
+            const currentHistoryAfterRollback = this.refinementHistories[moduleIndex];
+            const activeType = currentHistoryAfterRollback?.[targetIndex]?.type ?? 'spec';
+            this.syncModuleStatusesToOngoing(moduleIndex, activeType === 'code' ? 'code' : 'pseudo');
+
+            this.currentModule = moduleIndex;
+            this.currentRefinementEntry = targetIndex;
+            const activeEntry = this.refinementHistories[moduleIndex]?.[targetIndex];
+            if (activeEntry) {
+                this.openInEditor(activeEntry.filePath).catch(() => {});
+            }
+
+            this.postUpdate();
+        } catch (err) {
+            vscode.window.showErrorMessage(`回退失败: ${err}`);
+        } finally {
+            this.isBusy = false;
+            this.postUpdate();
+        }
     }
 
     async confirm(): Promise<void> {
@@ -625,7 +718,7 @@ export class WorkspaceManager {
         if (this.leafModuleIndices.has(nodeIndex)) {
             const history = this.refinementHistories[nodeIndex];
             if (history && history.length > 0) {
-                this.currentRefinementEntry = history.length - 1;
+                this.currentRefinementEntry = this.getActiveRefinementIndex(history);
                 this.openInEditor(history[this.currentRefinementEntry].filePath).catch(() => {});
             }
         } else {
@@ -643,17 +736,158 @@ export class WorkspaceManager {
 
     selectRefinement(moduleNodeIndex: number, entryIndex: number): void {
         this.currentModule = moduleNodeIndex;
-        this.currentRefinementEntry = entryIndex;
 
         const history = this.refinementHistories[moduleNodeIndex];
         if (history?.[entryIndex]) {
+            this.currentRefinementEntry = entryIndex;
+            this.markOnlyActive(history, entryIndex);
             this.openInEditor(history[entryIndex].filePath).catch(() => {});
+        } else {
+            this.currentRefinementEntry = -1;
         }
 
         this.postUpdate();
     }
 
     // ── private helpers ───────────────────────────────────────────────────
+
+    private getActiveRefinementIndex(history: RefinementEntry[]): number {
+        const activeIdx = history.findIndex(entry => entry.active === true);
+        if (activeIdx >= 0) return activeIdx;
+        return history.length - 1;
+    }
+
+    private markOnlyActive(history: RefinementEntry[], activeIndex: number): void {
+        history.forEach((entry, index) => {
+            entry.active = index === activeIndex;
+        });
+    }
+
+    private async rollbackSingleModuleToIndex(moduleIndex: number, targetIndex: number): Promise<boolean> {
+        const history = this.refinementHistories[moduleIndex];
+        if (!history || history.length === 0) return false;
+
+        const safeTarget = Math.max(0, Math.min(targetIndex, history.length - 1));
+        const removedEntries = history.slice(safeTarget + 1);
+        const removedHasCode = removedEntries.some(entry => entry.type === 'code');
+
+        if (removedEntries.length > 0) {
+            const modulePath = this.indexToPath.get(moduleIndex);
+            if (modulePath) {
+                const backupDir = path.join(modulePath, '.rollback_backup', `${Date.now()}_${safeTarget}`);
+                fs.mkdirSync(backupDir, { recursive: true });
+
+                removedEntries.forEach((entry, idx) => {
+                    this.backupAndDeleteEntryArtifacts(entry, backupDir, idx + 1);
+                });
+            }
+        }
+
+        const nextHistory = history.slice(0, safeTarget + 1);
+        this.markOnlyActive(nextHistory, safeTarget);
+        this.refinementHistories[moduleIndex] = nextHistory;
+
+        const modulePath = this.indexToPath.get(moduleIndex);
+        if (modulePath) {
+            saveRefinementHistory(modulePath, nextHistory);
+        }
+        return removedHasCode;
+    }
+
+    private backupAndDeleteEntryArtifacts(entry: RefinementEntry, backupDir: string, order: number): void {
+        const artifacts = [
+            entry.filePath,
+            getHumanJsonPath(entry.filePath),
+            `${entry.filePath}.highlight.json`
+        ];
+
+        for (const filePath of artifacts) {
+            if (!filePath || !fs.existsSync(filePath)) continue;
+            try {
+                const parsed = path.parse(filePath);
+                const backupName = `${String(order).padStart(2, '0')}_${parsed.base}`;
+                fs.copyFileSync(filePath, path.join(backupDir, backupName));
+            } catch (err) {
+                console.warn('[WorkspaceManager] 备份回退文件失败:', err);
+                continue;
+            }
+
+            try {
+                fs.unlinkSync(filePath);
+            } catch (err) {
+                console.warn('[WorkspaceManager] 删除回退文件失败:', err);
+            }
+        }
+    }
+
+    private syncModuleStatusesToOngoing(currentModuleIndex: number, activeType: 'pseudo' | 'code'): void {
+        if (!this.projectRoot) return;
+
+        const statusMap: Record<number, ModuleProgressStatus> = {};
+        this.leafOrder.forEach(idx => {
+            const history = this.refinementHistories[idx] || [];
+            const hasCode = history.some(entry => entry.type === 'code');
+            statusMap[idx] = hasCode ? 'completed' : 'pending';
+        });
+
+        if (activeType === 'pseudo') {
+            statusMap[currentModuleIndex] = 'inProgress';
+        } else {
+            const pos = this.leafOrder.indexOf(currentModuleIndex);
+            const nextIndex = pos >= 0 ? this.leafOrder[pos + 1] : undefined;
+            if (nextIndex !== undefined) {
+                statusMap[nextIndex] = 'inProgress';
+            }
+        }
+        this.moduleStatuses = statusMap;
+
+        try {
+            const projectAbs = this.projectRoot.absolutePath;
+            const ongoingPath = this.resolveOngoingPath(projectAbs);
+            if (!fs.existsSync(ongoingPath)) return;
+
+            const ongoing = JSON.parse(fs.readFileSync(ongoingPath, 'utf8')) as any[];
+            const pseudoRoot = settings.getPseudoPath();
+
+            const pathToLeafIndex = new Map<string, number>();
+            this.leafOrder.forEach(idx => {
+                const abs = this.indexToPath.get(idx);
+                if (!abs) return;
+                const realPath = isDraftPath(projectAbs, abs) ? toRealPath(projectAbs, abs) : abs;
+                const rel = path.relative(pseudoRoot, realPath).split(path.sep).join('/');
+                pathToLeafIndex.set(rel, idx);
+            });
+
+            const toFileStatus = (status: ModuleProgressStatus): string => {
+                if (status === 'completed') return '已完成';
+                if (status === 'inProgress') return '进行中';
+                return '待处理';
+            };
+
+            ongoing.forEach(item => {
+                const key = String(item?.path ?? '').split(path.sep).join('/');
+                const leafIdx = pathToLeafIndex.get(key);
+                if (leafIdx === undefined) return;
+                item.status = toFileStatus(statusMap[leafIdx] ?? 'pending');
+            });
+
+            const realPath = path.join(projectAbs, 'ongoing_leaf_modules.json');
+            const draftPath = toDraftPath(projectAbs, realPath);
+            writeJsonAtomically(draftPath, ongoing);
+        } catch (err) {
+            console.warn('[WorkspaceManager] 同步模块状态失败:', err);
+            vscode.window.showWarningMessage('模块状态文件更新失败，已完成内存状态回退。');
+        }
+    }
+
+    private async removeLaunchConfigSafe(projectName: string): Promise<void> {
+        try {
+            const { removeRootLaunchConfig } = await import('../tools/launch-config-updater.js');
+            await removeRootLaunchConfig(settings.getProjectPath(), projectName, 'python');
+        } catch (err) {
+            console.warn('[WorkspaceManager] 清理调试配置失败:', err);
+        }
+    }
 
     /** Resolve ongoing_leaf_modules.json preferring draft. */
     private resolveOngoingPath(projectAbs: string): string {
@@ -844,6 +1078,7 @@ export class WorkspaceManager {
             this.leafOrder = [];
             this.leafModuleIndices = new Set();
             this.indexToPath = new Map();
+            this.moduleStatuses = {};
             return;
         }
 
@@ -933,9 +1168,38 @@ export class WorkspaceManager {
                         : [];
                 }
             }
+
+            if (next[ni]?.length) {
+                next[ni] = next[ni].map(entry => ({ ...entry }));
+                const activeIdx = this.getActiveRefinementIndex(next[ni]);
+                this.markOnlyActive(next[ni], activeIdx);
+            }
         }
         this.refinementHistories = next;
         this._suppressHistoryPaths.clear();
+
+        const statuses: Record<number, ModuleProgressStatus> = {};
+        this.leafOrder.forEach(idx => {
+            const history = this.refinementHistories[idx] || [];
+            const hasCode = history.some(entry => entry.type === 'code');
+            statuses[idx] = hasCode ? 'completed' : 'pending';
+        });
+
+        if (this.currentModule >= 0 && this.leafOrder.includes(this.currentModule)) {
+            const history = this.refinementHistories[this.currentModule] || [];
+            const activeIdx = this.getActiveRefinementIndex(history);
+            this.currentRefinementEntry = activeIdx;
+            const activeType = history[activeIdx]?.type;
+            if (activeType === 'code') {
+                const pos = this.leafOrder.indexOf(this.currentModule);
+                const nextModule = this.leafOrder[pos + 1];
+                if (nextModule !== undefined) statuses[nextModule] = 'inProgress';
+            } else if (history.length > 0) {
+                statuses[this.currentModule] = 'inProgress';
+            }
+        }
+
+        this.moduleStatuses = statuses;
     }
 
     private canOperate(nodeIndex: number): boolean {
@@ -1011,6 +1275,7 @@ export class WorkspaceManager {
             currentModule: this.currentModule,
             refinementHistories: this.refinementHistories,
             currentRefinementEntry: this.currentRefinementEntry,
+            moduleStatuses: this.moduleStatuses,
             isBusy: this.isBusy,
             hasCommonDS: this.projectRoot
                 ? this._commonDS.exists(this.projectRoot.absolutePath)
