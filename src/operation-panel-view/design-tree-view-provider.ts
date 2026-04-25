@@ -44,12 +44,29 @@ export class DesignTreeViewProvider {
             }
             if (message.type !== 'executeCommand') return;
             const { commandId, payload } = message;
-            if (commandId === 'selectModule') {
-                WorkspaceManager.getInstance().selectModule((payload as any)?.index ?? -1);
-            } else if (commandId === 'openCommonDS') {
-                WorkspaceManager.getInstance().openCommonDS();
-            } else if (commandId === 'openActualDS') {
-                WorkspaceManager.getInstance().openActualDS();
+            const wm = WorkspaceManager.getInstance();
+            const p = payload as any;
+
+            switch (commandId) {
+                case 'selectDesignTreeModule':
+                    wm.selectDesignTreeModule(p?.index ?? -1);
+                    break;
+
+                case 'divide':
+                    await wm.divide(p?.index ?? -1, p?.customPrompt ?? '');
+                    break;
+
+                case 'deleteNode':
+                    await wm.deleteNode(p?.index ?? -1);
+                    break;
+
+                case 'addChildNode':
+                    await wm.addChildNode(p?.index ?? -1);
+                    break;
+
+                case 'save':
+                    await wm.saveDesignTree();
+                    break;
             }
         });
 

@@ -33,8 +33,6 @@ export class OperationPanelViewProvider implements vscode.WebviewViewProvider {
 
         webviewView.webview.onDidReceiveMessage(async (message: WebviewIncomingMessage) => {
             if (message.type === 'webviewReady') {
-                // Webview just loaded — push current state if a project is already active
-                // (WorkspaceManager will have posted nothing yet, so trigger a re-post)
                 return;
             }
 
@@ -52,10 +50,6 @@ export class OperationPanelViewProvider implements vscode.WebviewViewProvider {
                     wm.selectModule(p?.index ?? -1);
                     break;
 
-                case 'divide':
-                    await wm.divide(p?.index ?? -1, customPrompt);
-                    break;
-
                 case 'refine':
                     await wm.refine(p?.index ?? -1, customPrompt);
                     break;
@@ -70,10 +64,6 @@ export class OperationPanelViewProvider implements vscode.WebviewViewProvider {
 
                 case 'rollbackRefinement':
                     await wm.rollbackRefinement(p?.index ?? -1);
-                    break;
-
-                case 'confirm':
-                    await wm.confirm();
                     break;
 
                 case 'showDesignTree':

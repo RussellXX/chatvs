@@ -248,7 +248,7 @@ export class DesignmentTreeDataProvider implements vscode.TreeDataProvider<Desig
         if (element instanceof ProjectNode) {
             treeItem.contextValue = 'projectNode';
         }
-        if (element instanceof ActualDataStructureNode) {
+        if (element instanceof CommonDataStructureNode || element instanceof ActualDataStructureNode) {
             treeItem.command = {
                 command: 'vscode.open',
                 title: 'Open File',

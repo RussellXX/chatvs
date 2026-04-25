@@ -45,16 +45,18 @@ export interface WebviewReadyMessage {
 
 export type WebviewCommandId =
     | 'selectModule'
+    | 'selectDesignTreeModule'
     | 'divide'
-    | 'refine'          // 全局精化（保持原命名以向后兼容）
-    | 'localRefine'     // 局部精化（基于编辑器选区）
+    | 'deleteNode'
+    | 'addChildNode'
+    | 'save'
+    | 'refine'
+    | 'localRefine'
     | 'generateCode'
     | 'rollbackRefinement'
-    | 'confirm'
     | 'selectRefinement'
     | 'showDesignTree'
-    | 'openCommonDS'
-    | 'openActualDS';
+    | 'openCommonDS';
 
 /**
  * Payload for divide / refine / generateCode commands.

@@ -1,0 +1,233 @@
+:root {
+    --bg:                var(--vscode-editor-background, #1e1e1e);
+    --fg:                var(--vscode-foreground, #cccccc);
+    --input-bg:          var(--vscode-input-background, #3c3c3c);
+    --input-fg:          var(--vscode-input-foreground, #cccccc);
+    --input-border:      var(--vscode-input-border, #3c3c3c);
+    --focus-border:      var(--vscode-focusBorder, #007acc);
+    --btn-primary-bg:    var(--vscode-button-background, #0e639c);
+    --btn-primary-fg:    var(--vscode-button-foreground, #ffffff);
+    --btn-primary-hover: var(--vscode-button-hoverBackground, #1177bb);
+    --btn-sec-bg:        var(--vscode-button-secondaryBackground, #3a3d41);
+    --btn-sec-fg:        var(--vscode-button-secondaryForeground, #cccccc);
+    --btn-sec-hover:     var(--vscode-button-secondaryHoverBackground, #45494e);
+    --tag-bg:            var(--vscode-badge-background, #4d4d4d);
+    --tag-fg:            var(--vscode-badge-foreground, #ffffff);
+    --dropdown-bg:       var(--vscode-editorWidget-background, #252526);
+    --border:            var(--vscode-panel-border, #454545);
+    --desc:              var(--vscode-descriptionForeground, #9d9d9d);
+    --error:             var(--vscode-errorForeground, #f48771);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: var(--vscode-font-family, sans-serif);
+    font-size: var(--vscode-font-size, 13px);
+    background: var(--bg);
+    color: var(--fg);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 20px 22px 16px;
+    overflow: hidden;
+}
+
+h2 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.parent-hint {
+    font-size: 11px;
+    color: var(--desc);
+    margin-bottom: 16px;
+    min-height: 14px;
+}
+
+.form-group {
+    margin-bottom: 14px;
+}
+
+label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--desc);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.required { color: var(--error); }
+
+input[type="text"], textarea {
+    width: 100%;
+    background: var(--input-bg);
+    color: var(--input-fg);
+    border: 1px solid var(--input-border);
+    border-radius: 2px;
+    padding: 5px 8px;
+    font-family: inherit;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.1s;
+}
+
+input[type="text"]:focus, textarea:focus {
+    border-color: var(--focus-border);
+}
+
+textarea {
+    resize: vertical;
+    min-height: 58px;
+    max-height: 110px;
+    line-height: 1.4;
+}
+
+/* ── Tag input ──────────────────────────────────────────────────────────── */
+.tag-input-wrapper { position: relative; }
+
+.tag-input-container {
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 2px;
+    padding: 3px 6px 3px 4px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 3px;
+    min-height: 32px;
+    cursor: text;
+    transition: border-color 0.1s;
+}
+
+.tag-input-container:focus-within {
+    border-color: var(--focus-border);
+}
+
+.tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: var(--tag-bg);
+    color: var(--tag-fg);
+    padding: 1px 5px 1px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    max-width: 220px;
+}
+
+.tag > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tag-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border: none;
+    background: none;
+    color: inherit;
+    opacity: 0.65;
+    cursor: pointer;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+.tag-remove:hover { opacity: 1; }
+
+.tag-text-input {
+    border: none;
+    background: none;
+    color: var(--input-fg);
+    font-family: inherit;
+    font-size: 12px;
+    outline: none;
+    flex: 1;
+    min-width: 80px;
+    padding: 2px 2px;
+}
+
+/* ── Dropdown ───────────────────────────────────────────────────────────── */
+.tag-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--dropdown-bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    max-height: 130px;
+    overflow-y: auto;
+    z-index: 100;
+    display: none;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.35);
+}
+
+.tag-dropdown-item {
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tag-dropdown-item:hover,
+.tag-dropdown-item.active {
+    background: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+
+/* ── Misc ───────────────────────────────────────────────────────────────── */
+.hint {
+    font-size: 11px;
+    color: var(--desc);
+    margin-top: 4px;
+}
+
+.error-msg {
+    font-size: 11px;
+    color: var(--error);
+    margin-top: 4px;
+    display: none;
+}
+.error-msg.visible { display: block; }
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+.btn-row {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: auto;
+    padding-top: 16px;
+}
+
+.btn {
+    padding: 5px 16px;
+    border: none;
+    border-radius: 2px;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.12s;
+}
+
+.btn-primary {
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-fg);
+}
+.btn-primary:hover { background: var(--btn-primary-hover); }
+
+.btn-secondary {
+    background: var(--btn-sec-bg);
+    color: var(--btn-sec-fg);
+}
+.btn-secondary:hover { background: var(--btn-sec-hover); }

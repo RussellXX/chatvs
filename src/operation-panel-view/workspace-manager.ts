@@ -29,31 +29,17 @@ import {
     isDraftPath,
     toDraftPath,
     toRealPath,
-    toDraftForWrite,
     cleanDraft,
     promoteDraft,
     readJsonDraftFirst,
+    getDraftRoot,
 } from './draft-overlay';
 import { CommonDSManager } from './common-ds-manager';
-import { generateActualDS, actualDSStagingPath, actualDSRealPath } from './actual-ds-generator';
+import { generateActualDS, actualDSRealPath } from './actual-ds-generator';
+import { AddNodeDialogProvider } from './add-node-dialog-provider';
 import * as Diff from 'diff';
 
 // ── helpers ─────────────────────────────────────────────────────────────────
-
-/** Recursively copy src into dst, creating directories as needed.
- *  Uses copyFileSync + mkdirSync so it works on all Node.js versions. */
-function copyDirSync(src: string, dst: string): void {
-    fs.mkdirSync(dst, { recursive: true });
-    for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-        const srcPath = path.join(src, entry.name);
-        const dstPath = path.join(dst, entry.name);
-        if (entry.isDirectory()) {
-            copyDirSync(srcPath, dstPath);
-        } else {
-            fs.copyFileSync(srcPath, dstPath);
-        }
-    }
-}
 
 function appendCustomPrompt(userPrompt: string, customPrompt: string): string {
     const trimmed = (customPrompt || '').trim();
@@ -119,7 +105,7 @@ export class WorkspaceManager {
     private projectRoot: ProjectNode | null = null;
     private workspaceRoot: ProjectNode | null = null;
 
-    // view state
+    // ── Operation-panel state (derived from projectRoot / actual project) ──
     private nodes: TreeNodeData[] = [];
     private leafOrder: number[] = [];
     private leafModuleIndices: Set<number> = new Set();
@@ -127,13 +113,19 @@ export class WorkspaceManager {
     private currentRefinementEntry = -1;
     private refinementHistories: Record<number, RefinementEntry[]> = {};
     private moduleStatuses: Record<number, ModuleProgressStatus> = {};
-    private isBusy = false;
-    private _suppressHistoryPaths: Set<string> = new Set();
-
-    // index <-> path mapping (rebuilt from workspace tree each time)
     private indexToPath = new Map<number, string>();
 
+    // ── Design-tree state (derived from workspaceRoot / draft overlay) ──
+    private dtNodes: TreeNodeData[] = [];
+    private dtCurrentModule = -1;
+    private dtIndexToPath = new Map<number, string>();
+
+    private isBusy = false;
+
     private _commonDS: CommonDSManager;
+
+    // Real-path directories to delete when saveDesignTree() is called.
+    private _pendingRealDeletes: Set<string> = new Set();
 
     private constructor(private context: vscode.ExtensionContext) {
         this._commonDS = new CommonDSManager(context);
@@ -162,20 +154,27 @@ export class WorkspaceManager {
         this.workspaceRoot = cloneTree(projectNode);
         this.currentModule = -1;
         this.currentRefinementEntry = -1;
+        this.dtCurrentModule = -1;
         this.refinementHistories = {};
         this.moduleStatuses = {};
         this.isBusy = false;
         this._commonDS.reset();
+        this._pendingRealDeletes = new Set();
 
         this.rebuildDerivedState();
         this.postUpdate();
         DesignTreeViewProvider.createOrShow();
     }
 
+    /**
+     * Divide a node (design-tree workspace operation).
+     * Writes only to the .tmp draft overlay; does NOT touch the real project
+     * directory or the operation-panel state.
+     */
     async divide(nodeIndex: number, customPrompt = ''): Promise<void> {
         if (this.isBusy || !this.projectRoot || !this.workspaceRoot) return;
 
-        const targetPath = this.indexToPath.get(nodeIndex);
+        const targetPath = this.dtIndexToPath.get(nodeIndex);
         if (!targetPath) return;
 
         const node = this.findNode(this.workspaceRoot, targetPath);
@@ -191,50 +190,6 @@ export class WorkspaceManager {
         if (node instanceof ModuleNode && !node.isLeaf()) {
             vscode.window.showWarningMessage('只能拆分叶子模块节点。');
             return;
-        }
-
-        const hasRefinementHistory = Object.values(this.refinementHistories).some(
-            h => h.some(e => e.type === 'pseudo' || e.type === 'code')
-        );
-
-        if (hasRefinementHistory) {
-            const answer = await vscode.window.showWarningMessage(
-                '检测到当前工作区已有精化历史，拆分操作会导致精化历史被清除，是否继续？',
-                { modal: true }, '继续'
-            );
-            if (answer !== '继续') return;
-
-            const hasCodeHistory = Object.values(this.refinementHistories).some(
-                h => h.some(e => e.type === 'code')
-            );
-            if (hasCodeHistory) {
-                // Clean staging (code generated but not yet confirmed).
-                const stagingDir = this.codesStagingDir(this.projectRoot.absolutePath);
-                if (fs.existsSync(stagingDir)) {
-                    fs.rmSync(stagingDir, { recursive: true, force: true });
-                }
-                // Clean real codes dir (code was confirmed in a previous save).
-                try {
-                    const realCodeDir = path.join(
-                        settings.getCodesPath(), path.basename(this.projectRoot.absolutePath)
-                    );
-                    if (fs.existsSync(realCodeDir)) {
-                        fs.rmSync(realCodeDir, { recursive: true, force: true });
-                    }
-                } catch (err) {
-                    console.warn('[WorkspaceManager] 清理代码目录失败:', err);
-                }
-            }
-
-            this._suppressHistoryPaths = new Set(
-                Object.keys(this.refinementHistories)
-                    .map(ni => this.indexToPath.get(Number(ni)))
-                    .filter((p): p is string => !!p)
-            );
-            this.refinementHistories = {};
-
-            // Common DS is tied to the refinement phase; clear it for this session.
-            this._commonDS.clearDraft(this.projectRoot.absolutePath);
         }
 
         this.isBusy = true;
@@ -260,10 +215,14 @@ export class WorkspaceManager {
         });
 
         this.isBusy = false;
-        this.rebuildDerivedState();
+        this.rebuildDesignTreeState();
         this.postUpdate();
     }
 
+    /**
+     * Global refinement — writes pseudo-code directly to the real module
+     * directory (no draft staging).
+     */
     async refine(nodeIndex: number, customPrompt = ''): Promise<void> {
         if (this.isBusy || !this.projectRoot) return;
 
@@ -297,7 +256,7 @@ export class WorkspaceManager {
                     progress.report({ message: '正在提取通用数据结构...' });
                     const ongoingPath = this.resolveOngoingPath(projectAbs);
                     await this._commonDS.generate(projectAbs, ongoingPath);
-                    this.postUpdate(); // reveal the common DS node in the UI immediately
+                    this.postUpdate();
                 }
                 progress.report({ message: '正在精化...' });
 
@@ -310,8 +269,8 @@ export class WorkspaceManager {
                 const userPrompt = appendCustomPrompt(prompt.user, customPrompt);
                 const raw = await openaiHelper.callOpenAIForJSON(prompt.system, userPrompt);
 
-                const outputRealPath = path.join(modulePath, `pseudo_${Date.now()}.txt`);
-                const outputPath = toDraftForWrite(projectAbs, outputRealPath);
+                // Write directly to the real module directory (no draft staging).
+                const outputPath = path.join(modulePath, `pseudo_${Date.now()}.txt`);
                 fs.mkdirSync(path.dirname(outputPath), { recursive: true });
                 fs.writeFileSync(outputPath, raw, 'utf8');
 
@@ -319,6 +278,8 @@ export class WorkspaceManager {
                 history.push({ label: `粒度${pseudoCount + 1}`, filePath: outputPath, type: 'pseudo' });
                 this.currentRefinementEntry = history.length - 1;
                 this.markOnlyActive(history, this.currentRefinementEntry);
+
+                saveRefinementHistory(modulePath, history);
 
                 await this.openInEditor(outputPath);
                 progress.report({ message: '精化完成！' });
@@ -329,9 +290,15 @@ export class WorkspaceManager {
         });
 
         this.isBusy = false;
+        if (DesignmentTreeDataProvider.hasInstance()) {
+            DesignmentTreeDataProvider.getInstance().refresh(undefined);
+        }
         this.postUpdate();
     }
 
+    /**
+     * Local refinement — writes pseudo-code directly to the real module directory.
+     */
     async localRefine(nodeIndex: number, customPrompt = ''): Promise<void> {
         if (this.isBusy || !this.projectRoot) return;
 
@@ -388,8 +355,8 @@ export class WorkspaceManager {
                 const raw = await openaiHelper.callOpenAIForJSON(prompt.system, userPrompt);
                 const refinedContent = cleanLLMResponse(raw);
 
-                const outputRealPath = path.join(modulePath, `pseudo_local_${Date.now()}.txt`);
-                const outputPath = toDraftForWrite(projectAbs, outputRealPath);
+                // Write directly to the real module directory (no draft staging).
+                const outputPath = path.join(modulePath, `pseudo_local_${Date.now()}.txt`);
                 fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
                 const oldHumanPath = getHumanJsonPath(lastEntry.filePath);
@@ -415,6 +382,8 @@ export class WorkspaceManager {
                 this.currentRefinementEntry = history.length - 1;
                 this.markOnlyActive(history, this.currentRefinementEntry);
 
+                saveRefinementHistory(modulePath, history);
+
                 await this.openInEditor(outputPath);
                 progress.report({ message: '局部精化完成！' });
                 await delay(1000);
@@ -427,6 +396,10 @@ export class WorkspaceManager {
         this.postUpdate();
     }
 
+    /**
+     * Code generation — writes code directly to the real codes directory
+     * (no staging / draft overlay).
+     */
     async generateCode(nodeIndex: number, customPrompt = ''): Promise<void> {
         if (this.isBusy || !this.projectRoot) return;
 
@@ -445,6 +418,7 @@ export class WorkspaceManager {
         const projectName = path.basename(projectPath);
         const modulePath = this.indexToPath.get(nodeIndex)!;
         const language = 'python';
+        const realCodeDir = path.join(settings.getCodesPath(), projectName);
 
         this.isBusy = true;
         this.postUpdate();
@@ -455,17 +429,13 @@ export class WorkspaceManager {
             cancellable: false
         }, async progress => {
             try {
-                const stagingRoot = this.codesStagingDir(projectPath);
                 const topoIdx = this.leafOrder.indexOf(nodeIndex);
 
                 // Phase 1: first-module setup — project scaffold + data structure files.
-                // Must complete before building the code prompt so that data_structures.py
-                // is already in staging when the prompt reads it.
                 if (topoIdx === 0) {
                     const { initialProject } = await import('../tools/project-initializer.js');
-                    await initialProject(stagingRoot, language);
+                    await initialProject(realCodeDir, language);
 
-                    // Generate common DS if not yet available (e.g. user skipped refine).
                     if (!this._commonDS.exists(projectPath)) {
                         progress.report({ message: '正在提取通用数据结构...' });
                         const ongoingPath = this.resolveOngoingPath(projectPath);
@@ -478,52 +448,38 @@ export class WorkspaceManager {
                         const commonDSContent = fs.readFileSync(
                             this._commonDS.draftFirstPath(projectPath), 'utf8'
                         );
-                        await generateActualDS(stagingRoot, commonDSContent, language, this.context);
-                        this.postUpdate(); // reveal the actual-ds node in the design tree immediately
+                        await generateActualDS(realCodeDir, commonDSContent, language, this.context);
+                        this.postUpdate();
                     }
                 }
 
                 // Phase 2: generate module code.
-                // For topoIdx === 0, data_structures.py was just written to stagingRoot.
-                // For topoIdx > 0, it was promoted to realCodeDir by a prior confirm —
-                // stagingRoot no longer has it, so fall back to realCodeDir.
-                let dsRoot = stagingRoot;
-                if (topoIdx > 0 && !fs.existsSync(actualDSStagingPath(stagingRoot, language))) {
-                    try {
-                        dsRoot = path.join(settings.getCodesPath(), projectName);
-                    } catch (_) { /* settings not configured; DS will be absent from prompt */ }
-                }
-
                 progress.report({ message: '正在生成代码...' });
                 const lastEntry = history[history.length - 1];
                 const fileContent = fs.readFileSync(lastEntry.filePath, 'utf8');
                 const pseudoCount = history.filter(e => e.type === 'pseudo').length;
                 const prompt = await openaiHelper.getGenerateCodePrompt(
-                    fileContent, `粒度${pseudoCount}`, language, modulePath, dsRoot
+                    fileContent, `粒度${pseudoCount}`, language, modulePath, realCodeDir
                 );
                 const userPrompt = appendCustomPrompt(prompt.user, customPrompt);
                 const raw = await openaiHelper.callOpenAIForJSON(prompt.system, userPrompt);
                 const code = cleanLLMResponse(raw);
 
                 const { writeModule } = await import('../tools/module-writer.js');
-                const realModulePath = isDraftPath(projectPath, modulePath)
-                    ? toRealPath(projectPath, modulePath)
-                    : modulePath;
-                const moduleRelPath = path.relative(projectPath, realModulePath);
-                const generatedFilePath = await writeModule(stagingRoot, moduleRelPath, code, language);
+                const moduleRelPath = path.relative(projectPath, modulePath);
+                const generatedFilePath = await writeModule(realCodeDir, moduleRelPath, code, language);
 
                 if (topoIdx === this.leafOrder.length - 1) {
-                    // Launch config points to the real path (post-confirm location).
-                    const realCodeDir = path.join(settings.getCodesPath(), projectName);
-                    const realFilePath = path.join(realCodeDir, path.relative(stagingRoot, generatedFilePath));
                     const { updateRootLaunchConfig } = await import('../tools/launch-config-updater.js');
-                    await updateRootLaunchConfig(settings.getProjectPath(), projectName, realFilePath, language);
+                    await updateRootLaunchConfig(settings.getProjectPath(), projectName, generatedFilePath, language);
                     vscode.window.showInformationMessage(`已更新调试配置: "Run ${projectName}"`);
                 }
 
                 history.push({ label: '实际代码', filePath: generatedFilePath, type: 'code' });
                 this.currentRefinementEntry = history.length - 1;
                 this.markOnlyActive(history, this.currentRefinementEntry);
+
+                saveRefinementHistory(modulePath, history);
 
                 await this.openInEditor(generatedFilePath);
                 progress.report({ message: '代码生成成功！' });
@@ -534,6 +490,10 @@ export class WorkspaceManager {
         });
 
         this.isBusy = false;
+        this.rebuildDerivedState();
+        if (DesignmentTreeDataProvider.hasInstance()) {
+            DesignmentTreeDataProvider.getInstance().refresh(undefined);
+        }
         this.postUpdate();
     }
 
@@ -588,15 +548,16 @@ export class WorkspaceManager {
             }
 
             if (removedCurrentHasCode && isFirstLeaf) {
-                const codeProjectDir = path.join(settings.getCodesPath(), projectName);
-                if (fs.existsSync(codeProjectDir)) {
-                    fs.rmSync(codeProjectDir, { recursive: true, force: true });
+                // Delete the entire real codes directory for this project.
+                try {
+                    const realCodeDir = path.join(settings.getCodesPath(), projectName);
+                    if (fs.existsSync(realCodeDir)) {
+                        fs.rmSync(realCodeDir, { recursive: true, force: true });
+                    }
+                } catch (err) {
+                    console.warn('[WorkspaceManager] 清理代码目录失败:', err);
                 }
-                const stagingDir = this.codesStagingDir(projectAbs);
-                if (fs.existsSync(stagingDir)) {
-                    fs.rmSync(stagingDir, { recursive: true, force: true });
-                }
-                this._commonDS.clearDraft(projectAbs);
+                this._commonDS.clearReal(projectAbs);
                 DesignmentTreeDataProvider.getInstance().refresh(undefined);
             }
 
@@ -624,45 +585,106 @@ export class WorkspaceManager {
         }
     }
 
-    async confirm(): Promise<void> {
+    /**
+     * Save the design-tree workspace: promotes the .tmp draft overlay to the
+     * real project directory.  Only the module structure is synced; refinement
+     * and code files already live in the real project and codes dir.
+     *
+     * If the module structure has changed AND refinement history exists, warns
+     * the user and clears all histories on confirmation.
+     */
+    async saveDesignTree(): Promise<void> {
         if (!this.projectRoot || !this.workspaceRoot) return;
 
-        const projectAbs = this.projectRoot.absolutePath;
-        const stagingDir = this.codesStagingDir(projectAbs);
-        let realCodeDir = '';
-
-        try {
-            realCodeDir = path.join(settings.getCodesPath(), path.basename(projectAbs));
-
-            // Promote generated code staging to the real codes directory first,
-            // so that promoteDraft() does not copy it into projectAbs.
-            // Merge (not replace): staging files overwrite existing, but files
-            // already in realCodeDir (e.g. data_structures.py from a prior
-            // confirm) are preserved.
-            if (fs.existsSync(stagingDir)) {
-                copyDirSync(stagingDir, realCodeDir);
-                fs.rmSync(stagingDir, { recursive: true, force: true });
-            }
-            promoteDraft(projectAbs);
-            this._commonDS.cleanupOnConfirm(projectAbs);
-        } catch (err) {
-            vscode.window.showErrorMessage(`草稿合并失败: ${err}`);
+        // Validate leaf topology before saving.
+        const topoCheck = this._validateLeafTopology();
+        if (!topoCheck.valid) {
+            vscode.window.showErrorMessage(topoCheck.error ?? '工作区叶子节点拓扑校验失败，无法保存。');
             return;
         }
 
-        this.remapTreeToReal(this.workspaceRoot, projectAbs);
-        for (const history of Object.values(this.refinementHistories)) {
-            for (const entry of history) {
-                if (!isDraftPath(projectAbs, entry.filePath)) continue;
-                if (entry.type === 'code') {
-                    // Code entries were staged in .tmp/_code_output; remap to real codes dir.
-                    entry.filePath = path.join(realCodeDir, path.relative(stagingDir, entry.filePath));
-                } else {
-                    entry.filePath = toRealPath(projectAbs, entry.filePath);
+        const projectAbs = this.projectRoot.absolutePath;
+
+        // Detect whether the draft overlay contains any module-structure changes.
+        const draftRoot = getDraftRoot(projectAbs);
+        const hasDraftContent = (fs.existsSync(draftRoot) && fs.readdirSync(draftRoot).length > 0)
+            || this._pendingRealDeletes.size > 0;
+
+        if (hasDraftContent) {
+            const hasHistory = Object.values(this.refinementHistories).some(
+                h => h.some(e => e.type === 'pseudo' || e.type === 'code')
+            );
+
+            if (hasHistory) {
+                const answer = await vscode.window.showWarningMessage(
+                    '检测到已存在精化历史，如修改设计，会导致精化历史被清空。是否继续？',
+                    { modal: true }, '继续'
+                );
+                if (answer !== '继续') return;
+
+                // Clear all refinement files from disk for the current actual leaves.
+                for (const [idxStr, history] of Object.entries(this.refinementHistories)) {
+                    const absPath = this.indexToPath.get(Number(idxStr));
+                    if (!absPath) continue;
+                    for (const entry of history.slice(1)) {
+                        const artifacts = [
+                            entry.filePath,
+                            getHumanJsonPath(entry.filePath),
+                            `${entry.filePath}.highlight.json`
+                        ];
+                        for (const f of artifacts) {
+                            if (f && fs.existsSync(f)) {
+                                try { fs.unlinkSync(f); } catch (_) {}
+                            }
+                        }
+                    }
+                    const histFile = path.join(absPath, 'refinement_history.json');
+                    if (fs.existsSync(histFile)) {
+                        try { fs.unlinkSync(histFile); } catch (_) {}
+                    }
                 }
+
+                // Clear CommonDS (real file) and codes directory.
+                // clearReal() also sets _suppress=true so exists() returns false
+                // until the next generate() call.
+                this._commonDS.clearReal(projectAbs);
+                try {
+                    const projectName = path.basename(projectAbs);
+                    const realCodeDir = path.join(settings.getCodesPath(), projectName);
+                    if (fs.existsSync(realCodeDir)) {
+                        fs.rmSync(realCodeDir, { recursive: true, force: true });
+                    }
+                    await this.removeLaunchConfigSafe(projectName);
+                } catch (err) {
+                    console.warn('[WorkspaceManager] 清理代码目录失败:', err);
+                }
+
+                this.refinementHistories = {};
+                this.currentModule = -1;
+                this.currentRefinementEntry = -1;
             }
         }
 
+        // Promote .tmp → actual project directory.
+        try {
+            promoteDraft(projectAbs);
+        } catch (err) {
+            vscode.window.showErrorMessage(`保存失败: ${err}`);
+            return;
+        }
+
+        // Delete real-path directories that were queued during deleteNode() calls.
+        for (const realDir of this._pendingRealDeletes) {
+            try {
+                if (fs.existsSync(realDir)) fs.rmSync(realDir, { recursive: true, force: true });
+            } catch (err) {
+                console.warn('[WorkspaceManager] 删除节点目录失败:', err);
+            }
+        }
+        this._pendingRealDeletes = new Set();
+
+        // Remap workspaceRoot draft paths → real paths, then sync to projectRoot.
+        this.remapTreeToReal(this.workspaceRoot, projectAbs);
         this.projectRoot.children = this.workspaceRoot.children.map(child => {
             if (child instanceof RequirementNode) {
                 return new RequirementNode(this.projectRoot!);
@@ -673,17 +695,12 @@ export class WorkspaceManager {
 
         this.rebuildDerivedState();
 
-        for (const [idxStr, history] of Object.entries(this.refinementHistories)) {
-            const absPath = this.indexToPath.get(Number(idxStr));
-            if (absPath) saveRefinementHistory(absPath, history);
-        }
-
         DesignmentTreeDataProvider.getInstance().refresh(undefined);
         this.postUpdate();
-        vscode.window.showInformationMessage('工作区已保存。');
+        vscode.window.showInformationMessage('设计树已保存。');
     }
 
-    /** Open the common_data_structures.json file (draft-first) in the editor. */
+    /** Open the common_data_structures.json file in the editor. */
     async openCommonDS(): Promise<void> {
         if (!this.projectRoot) return;
         const filePath = this._commonDS.draftFirstPath(this.projectRoot.absolutePath);
@@ -692,18 +709,11 @@ export class WorkspaceManager {
         }
     }
 
-    /** Open the language-specific data structure file (e.g. data_structures.py) in the editor.
-     *  Follows draft-first: prefers the staged copy when it exists. */
+    /** Open the language-specific data structure file (e.g. data_structures.py) in the editor. */
     async openActualDS(): Promise<void> {
         if (!this.projectRoot) return;
         try {
-            const projectAbs = this.projectRoot.absolutePath;
-            const stagingPath = actualDSStagingPath(this.codesStagingDir(projectAbs), 'python');
-            if (fs.existsSync(stagingPath)) {
-                await this.openInEditor(stagingPath);
-                return;
-            }
-            const realCodeDir = path.join(settings.getCodesPath(), path.basename(projectAbs));
+            const realCodeDir = path.join(settings.getCodesPath(), path.basename(this.projectRoot.absolutePath));
             const filePath = actualDSRealPath(realCodeDir, 'python');
             if (fs.existsSync(filePath)) {
                 await this.openInEditor(filePath);
@@ -711,6 +721,126 @@ export class WorkspaceManager {
         } catch (_) {}
     }
 
+    /**
+     * Delete a node (and its entire subtree) from the workspace draft.
+     * Draft-path subtrees are removed from .tmp immediately; real-path subtree
+     * roots are queued in _pendingRealDeletes for deletion on save.
+     */
+    async deleteNode(nodeIndex: number): Promise<void> {
+        if (this.isBusy || !this.projectRoot || !this.workspaceRoot) return;
+
+        const targetPath = this.dtIndexToPath.get(nodeIndex);
+        if (!targetPath) return;
+
+        const node = this.findNode(this.workspaceRoot, targetPath);
+        if (!node || !(node instanceof ModuleNode)) return;
+
+        const parent = node.parent!;
+        (parent.children as any[]) = (parent.children as any[]).filter(c => c !== node);
+
+        const projectAbs = this.projectRoot.absolutePath;
+
+        // Remove all leaf names in the subtree from draft manifests.
+        const leafNames = this._collectLeafNames(node);
+        this._removeLeafNamesFromDraftManifests(leafNames);
+
+        // Delete or queue the subtree root (fs.rmSync is recursive).
+        if (isDraftPath(projectAbs, targetPath)) {
+            try {
+                if (fs.existsSync(targetPath)) fs.rmSync(targetPath, { recursive: true, force: true });
+            } catch (err) {
+                console.warn('[WorkspaceManager] 删除暂存节点失败:', err);
+            }
+        } else {
+            this._pendingRealDeletes.add(targetPath);
+        }
+
+        this.rebuildDesignTreeState();
+        this.postUpdate();
+    }
+
+    /**
+     * Show the add-child-node dialog and, on confirmation, create a new leaf
+     * node in the workspace draft under the given parent node.
+     */
+    async addChildNode(nodeIndex: number): Promise<void> {
+        if (this.isBusy || !this.projectRoot || !this.workspaceRoot) return;
+
+        const targetPath = this.dtIndexToPath.get(nodeIndex);
+        if (!targetPath) return;
+
+        const node = this.findNode(this.workspaceRoot, targetPath);
+        if (!node) return;
+
+        const parentNode = node as ProjectNode | ModuleNode;
+        const isRoot = parentNode instanceof ProjectNode;
+
+        const namePrefix = isRoot ? '' : (parentNode as ModuleNode).getPrefix() + '.';
+        const availableLeaves = this._getWorkspaceLeafNames(
+            parentNode instanceof ModuleNode ? parentNode : undefined
+        );
+
+        const result = await AddNodeDialogProvider.show(
+            this.context.extensionUri,
+            parentNode.label,
+            availableLeaves
+        );
+        if (!result) return;
+
+        const childShortName = result.name;
+        const childFullName  = namePrefix + childShortName;
+        const projectAbs     = this.projectRoot.absolutePath;
+
+        const realParentPath = isDraftPath(projectAbs, targetPath)
+            ? toRealPath(projectAbs, targetPath)
+            : targetPath;
+        const childRealPath  = path.join(realParentPath, childShortName);
+        const childDraftPath = toDraftPath(projectAbs, childRealPath);
+
+        const spec: DivisionModuleSpec = {
+            name:         childFullName,
+            description:  result.description,
+            dependencies: result.dependencies,
+            path:         path.join(this.projectRoot.label, childFullName.replace(/\./g, path.sep))
+        };
+
+        fs.mkdirSync(childDraftPath, { recursive: true });
+        fs.writeFileSync(
+            path.join(childDraftPath, 'content.txt'),
+            JSON.stringify(spec, null, 2),
+            'utf8'
+        );
+
+        // Update draft manifests.
+        const modulesRealPath  = path.join(projectAbs, 'modules.json');
+        const ongoingRealPath  = path.join(projectAbs, 'ongoing_leaf_modules.json');
+        const modulesDraftPath = toDraftPath(projectAbs, modulesRealPath);
+        const ongoingDraftPath = toDraftPath(projectAbs, ongoingRealPath);
+
+        let allModules: any[] = readJsonDraftFirst(projectAbs, modulesRealPath);
+        let ongoing: any[]    = readJsonDraftFirst(projectAbs, ongoingRealPath);
+
+        // If the parent was a leaf module, it is no longer a leaf — remove from ongoing.
+        if (!isRoot && (parentNode as ModuleNode).isLeaf()) {
+            const parentFullName = (parentNode as ModuleNode).getPrefix();
+            ongoing    = ongoing.filter((m: any)    => m.name !== parentFullName);
+            allModules = allModules.filter((m: any) => m.name !== parentFullName);
+        }
+
+        allModules.push(spec);
+        ongoing.push(spec);
+
+        writeJsonAtomically(modulesDraftPath, allModules);
+        writeJsonAtomically(ongoingDraftPath, ongoing);
+
+        const childNode = new ModuleNode(childShortName, childDraftPath, parentNode);
+        (parentNode.children as any[]).push(childNode);
+
+        this.rebuildDesignTreeState();
+        this.postUpdate();
+    }
+
+    /** Select a module from the operation panel. */
     selectModule(nodeIndex: number): void {
         this.currentModule = nodeIndex;
         this.currentRefinementEntry = -1;
@@ -734,6 +864,21 @@ export class WorkspaceManager {
         this.postUpdate();
     }
 
+    /** Select a module from the design tree (does not affect operation panel state). */
+    selectDesignTreeModule(nodeIndex: number): void {
+        this.dtCurrentModule = nodeIndex;
+
+        const absPath = this.dtIndexToPath.get(nodeIndex);
+        if (absPath) {
+            const contentFile = path.join(absPath, 'content.txt');
+            if (fs.existsSync(contentFile)) {
+                this.openInEditor(contentFile).catch(() => {});
+            }
+        }
+
+        this.postUpdate();
+    }
+
     selectRefinement(moduleNodeIndex: number, entryIndex: number): void {
         this.currentModule = moduleNodeIndex;
 
@@ -750,6 +895,125 @@ export class WorkspaceManager {
     }
 
     // ── private helpers ───────────────────────────────────────────────────
+
+    /** Return the full dotted names of all workspace-tree leaf modules, optionally excluding one node. */
+    private _getWorkspaceLeafNames(exclude?: ModuleNode): string[] {
+        if (!this.workspaceRoot) return [];
+        const names: string[] = [];
+        const collect = (node: ProjectNode | ModuleNode) => {
+            const kids = (node instanceof ProjectNode
+                ? node.children.filter(c => c instanceof ModuleNode)
+                : node.children) as ModuleNode[];
+            if (kids.length === 0 && node instanceof ModuleNode && node !== exclude) {
+                names.push(node.getPrefix());
+            }
+            for (const child of kids) collect(child);
+        };
+        collect(this.workspaceRoot);
+        return names;
+    }
+
+    /** Collect all leaf module full names under a subtree root. */
+    private _collectLeafNames(node: ModuleNode): string[] {
+        if (node.isLeaf()) return [node.getPrefix()];
+        const names: string[] = [];
+        for (const child of node.children) names.push(...this._collectLeafNames(child));
+        return names;
+    }
+
+    /** Remove a set of leaf module names from the draft manifest files, cleaning up dep references too. */
+    private _removeLeafNamesFromDraftManifests(leafNames: string[]): void {
+        if (!this.projectRoot || leafNames.length === 0) return;
+        const nameSet          = new Set(leafNames);
+        const projectAbs       = this.projectRoot.absolutePath;
+        const modulesRealPath  = path.join(projectAbs, 'modules.json');
+        const ongoingRealPath  = path.join(projectAbs, 'ongoing_leaf_modules.json');
+        const modulesDraftPath = toDraftPath(projectAbs, modulesRealPath);
+        const ongoingDraftPath = toDraftPath(projectAbs, ongoingRealPath);
+
+        const clean = (arr: any[]) => {
+            const filtered = arr.filter((m: any) => !nameSet.has(m.name));
+            filtered.forEach((m: any) => {
+                if (Array.isArray(m.dependencies)) {
+                    m.dependencies = m.dependencies.filter((d: string) => !nameSet.has(d));
+                }
+            });
+            return filtered;
+        };
+
+        writeJsonAtomically(modulesDraftPath, clean(readJsonDraftFirst(projectAbs, modulesRealPath)));
+        writeJsonAtomically(ongoingDraftPath, clean(readJsonDraftFirst(projectAbs, ongoingRealPath)));
+    }
+
+    /**
+     * Validate that workspace leaf nodes form a valid DAG with no missing deps.
+     * Returns { valid: true } or { valid: false, error: string }.
+     */
+    private _validateLeafTopology(): { valid: boolean; error?: string } {
+        if (!this.workspaceRoot) return { valid: true };
+
+        const leafNodes: { name: string; deps: string[] }[] = [];
+        const leafNameSet = new Set<string>();
+
+        const collect = (node: ProjectNode | ModuleNode) => {
+            const kids = (node instanceof ProjectNode
+                ? node.children.filter(c => c instanceof ModuleNode)
+                : node.children) as ModuleNode[];
+            if (kids.length === 0 && node instanceof ModuleNode) {
+                const name = node.getPrefix();
+                leafNameSet.add(name);
+                let deps: string[] = [];
+                try {
+                    const cp = path.join(node.absolutePath, 'content.txt');
+                    if (fs.existsSync(cp)) {
+                        const json = JSON.parse(fs.readFileSync(cp, 'utf8'));
+                        deps = Array.isArray(json.dependencies) ? json.dependencies : [];
+                    }
+                } catch { deps = []; }
+                leafNodes.push({ name, deps });
+            }
+            for (const child of kids) collect(child);
+        };
+        collect(this.workspaceRoot);
+
+        if (leafNodes.length === 0) return { valid: true };
+
+        // Check for missing references.
+        for (const { name, deps } of leafNodes) {
+            for (const dep of deps) {
+                if (!leafNameSet.has(dep)) {
+                    return { valid: false, error: `模块 "${name}" 的依赖 "${dep}" 不存在于当前叶子节点中，无法保存。` };
+                }
+            }
+        }
+
+        // Kahn's algorithm — check for cycles.
+        const inDegree = new Map<string, number>();
+        const adj      = new Map<string, string[]>();
+        for (const { name } of leafNodes) { inDegree.set(name, 0); adj.set(name, []); }
+        for (const { name, deps } of leafNodes) {
+            for (const dep of deps) {
+                adj.get(dep)!.push(name);
+                inDegree.set(name, (inDegree.get(name) ?? 0) + 1);
+            }
+        }
+        const queue = [...inDegree.entries()].filter(([, d]) => d === 0).map(([n]) => n);
+        let count = 0;
+        while (queue.length > 0) {
+            const n = queue.shift()!;
+            count++;
+            for (const dep of (adj.get(n) ?? [])) {
+                const d = (inDegree.get(dep) ?? 0) - 1;
+                inDegree.set(dep, d);
+                if (d === 0) queue.push(dep);
+            }
+        }
+        if (count !== leafNodes.length) {
+            return { valid: false, error: '当前工作区叶子节点不存在拓扑排序，无法保存。' };
+        }
+
+        return { valid: true };
+    }
 
     private getActiveRefinementIndex(history: RefinementEntry[]): number {
         const activeIdx = history.findIndex(entry => entry.active === true);
@@ -843,6 +1107,8 @@ export class WorkspaceManager {
 
         try {
             const projectAbs = this.projectRoot.absolutePath;
+            // Always use real path for ongoing_leaf_modules.json — operation-panel state
+            // is based on the actual project directory, not the draft overlay.
             const ongoingPath = this.resolveOngoingPath(projectAbs);
             if (!fs.existsSync(ongoingPath)) return;
 
@@ -853,8 +1119,7 @@ export class WorkspaceManager {
             this.leafOrder.forEach(idx => {
                 const abs = this.indexToPath.get(idx);
                 if (!abs) return;
-                const realPath = isDraftPath(projectAbs, abs) ? toRealPath(projectAbs, abs) : abs;
-                const rel = path.relative(pseudoRoot, realPath).split(path.sep).join('/');
+                const rel = path.relative(pseudoRoot, abs).split(path.sep).join('/');
                 pathToLeafIndex.set(rel, idx);
             });
 
@@ -871,9 +1136,8 @@ export class WorkspaceManager {
                 item.status = toFileStatus(statusMap[leafIdx] ?? 'pending');
             });
 
-            const realPath = path.join(projectAbs, 'ongoing_leaf_modules.json');
-            const draftPath = toDraftPath(projectAbs, realPath);
-            writeJsonAtomically(draftPath, ongoing);
+            // Write directly to the real file (not to .tmp).
+            writeJsonAtomically(ongoingPath, ongoing);
         } catch (err) {
             console.warn('[WorkspaceManager] 同步模块状态失败:', err);
             vscode.window.showWarningMessage('模块状态文件更新失败，已完成内存状态回退。');
@@ -889,11 +1153,13 @@ export class WorkspaceManager {
         }
     }
 
-    /** Resolve ongoing_leaf_modules.json preferring draft. */
+    /**
+     * Resolve ongoing_leaf_modules.json — always uses the real project path
+     * for operation-panel state.  The draft overlay is only relevant for the
+     * design-tree view.
+     */
     private resolveOngoingPath(projectAbs: string): string {
-        const real = path.join(projectAbs, 'ongoing_leaf_modules.json');
-        const draft = toDraftPath(projectAbs, real);
-        return fs.existsSync(draft) ? draft : real;
+        return path.join(projectAbs, 'ongoing_leaf_modules.json');
     }
 
     private async performDivision(
@@ -1072,13 +1338,18 @@ export class WorkspaceManager {
         throw new Error('LLM 未能生成符合命名规范的方案。');
     }
 
+    /**
+     * Rebuild the operation-panel derived state from projectRoot (actual project directory).
+     * Also calls rebuildDesignTreeState() to refresh the design-tree view.
+     */
     private rebuildDerivedState(): void {
-        if (!this.workspaceRoot) {
+        if (!this.projectRoot) {
             this.nodes = [];
             this.leafOrder = [];
             this.leafModuleIndices = new Set();
             this.indexToPath = new Map();
             this.moduleStatuses = {};
+            this.rebuildDesignTreeState();
             return;
         }
 
@@ -1116,14 +1387,16 @@ export class WorkspaceManager {
             for (const child of moduleChildren) serialize(child);
         };
 
-        serialize(this.workspaceRoot);
+        // Build OP state from the REAL project tree (projectRoot), not the workspace.
+        serialize(this.projectRoot);
 
         this.nodes = nodes;
         this.indexToPath = indexToPath;
         this.leafModuleIndices = leafModuleIndices;
 
+        // Use real ongoing_leaf_modules.json for OP topology.
         const pseudoPath = settings.getPseudoPath();
-        const projectAbs = this.projectRoot!.absolutePath;
+        const projectAbs = this.projectRoot.absolutePath;
         const ongoingPath = this.resolveOngoingPath(projectAbs);
 
         if (fs.existsSync(ongoingPath)) {
@@ -1133,8 +1406,7 @@ export class WorkspaceManager {
                 this.leafOrder = sorted
                     .map((m: any) => {
                         const realP = path.join(pseudoPath, m.path);
-                        const draftP = toDraftPath(projectAbs, realP);
-                        return pathToIndex.get(draftP) ?? pathToIndex.get(realP) ?? -1;
+                        return pathToIndex.get(realP) ?? -1;
                     })
                     .filter(i => i >= 0);
             } catch (err) {
@@ -1152,11 +1424,6 @@ export class WorkspaceManager {
 
             if (this.refinementHistories[ni]) {
                 next[ni] = this.refinementHistories[ni];
-            } else if (this._suppressHistoryPaths.has(absPath)) {
-                const specPath = path.join(absPath, 'content.txt');
-                next[ni] = fs.existsSync(specPath)
-                    ? [{ label: '模块规约', filePath: specPath, type: 'spec' }]
-                    : [];
             } else {
                 const stored = loadRefinementHistory(absPath);
                 if (stored && stored.length > 0) {
@@ -1176,30 +1443,92 @@ export class WorkspaceManager {
             }
         }
         this.refinementHistories = next;
-        this._suppressHistoryPaths.clear();
 
         const statuses: Record<number, ModuleProgressStatus> = {};
+        let ongoingModuleFound: boolean = false;
         this.leafOrder.forEach(idx => {
             const history = this.refinementHistories[idx] || [];
             const hasCode = history.some(entry => entry.type === 'code');
-            statuses[idx] = hasCode ? 'completed' : 'pending';
+            // statuses[idx] = hasCode ? 'completed' : 'pending';
+            if (hasCode) statuses[idx] = 'completed';
+            else {
+                statuses[idx] = ongoingModuleFound ? 'pending' : 'inProgress';
+                ongoingModuleFound = true;
+            }
         });
 
-        if (this.currentModule >= 0 && this.leafOrder.includes(this.currentModule)) {
-            const history = this.refinementHistories[this.currentModule] || [];
-            const activeIdx = this.getActiveRefinementIndex(history);
-            this.currentRefinementEntry = activeIdx;
-            const activeType = history[activeIdx]?.type;
-            if (activeType === 'code') {
-                const pos = this.leafOrder.indexOf(this.currentModule);
-                const nextModule = this.leafOrder[pos + 1];
-                if (nextModule !== undefined) statuses[nextModule] = 'inProgress';
-            } else if (history.length > 0) {
-                statuses[this.currentModule] = 'inProgress';
-            }
-        }
+        // if (this.currentModule >= 0 && this.leafOrder.includes(this.currentModule)) {
+        //     const history = this.refinementHistories[this.currentModule] || [];
+        //     const activeIdx = this.getActiveRefinementIndex(history);
+        //     this.currentRefinementEntry = activeIdx;
+        //     const activeType = history[activeIdx]?.type;
+        //     if (activeType === 'code') {
+        //         const pos = this.leafOrder.indexOf(this.currentModule);
+        //         const nextModule = this.leafOrder[pos + 1];
+        //         if (nextModule !== undefined) statuses[nextModule] = 'inProgress';
+        //     } else if (history.length > 0) {
+        //         statuses[this.currentModule] = 'inProgress';
+        //     }
+        // }
 
         this.moduleStatuses = statuses;
+
+        this.rebuildDesignTreeState();
+    }
+
+    /**
+     * Rebuild the design-tree derived state from workspaceRoot (draft overlay).
+     * This is the only state sent to the design-tree panel.
+     */
+    private rebuildDesignTreeState(): void {
+        if (!this.workspaceRoot) {
+            this.dtNodes = [];
+            this.dtCurrentModule = -1;
+            this.dtIndexToPath = new Map();
+            return;
+        }
+
+        const nodes: TreeNodeData[] = [];
+        const indexToPath = new Map<number, string>();
+
+        const serialize = (node: DesignmentTreeNode) => {
+            if (node instanceof RequirementNode) return;
+
+            const idx = nodes.length;
+            indexToPath.set(idx, node.absolutePath);
+
+            let nodeType: NodeType;
+            let moduleChildren: DesignmentTreeNode[];
+
+            if (node instanceof ProjectNode) {
+                moduleChildren = node.children.filter(c => c instanceof ModuleNode);
+                nodeType = 'root';
+            } else {
+                moduleChildren = (node as ModuleNode).children;
+                nodeType = moduleChildren.length === 0 ? 'leaf' : 'non-leaf';
+            }
+
+            let desc = '';
+            try { desc = readModuleDesc(node.absolutePath); } catch { desc = ''; }
+
+            nodes.push({
+                nodeType,
+                title: node.label,
+                desc,
+                childCount: moduleChildren.length
+            });
+
+            for (const child of moduleChildren) serialize(child);
+        };
+
+        serialize(this.workspaceRoot);
+
+        this.dtNodes = nodes;
+        this.dtIndexToPath = indexToPath;
+
+        if (this.dtCurrentModule >= this.dtNodes.length) {
+            this.dtCurrentModule = -1;
+        }
     }
 
     private canOperate(nodeIndex: number): boolean {
@@ -1245,9 +1574,13 @@ export class WorkspaceManager {
         }
     }
 
-    /** Staging directory for generated code files within the draft overlay. */
-    private codesStagingDir(projectAbs: string): string {
-        return path.join(projectAbs, '.tmp', '_code_output');
+    /** True if data_structures.py exists in the real codes directory. */
+    private _hasActualDS(): boolean {
+        if (!this.projectRoot) return false;
+        try {
+            const realCodeDir = path.join(settings.getCodesPath(), path.basename(this.projectRoot.absolutePath));
+            return fs.existsSync(actualDSRealPath(realCodeDir, 'python'));
+        } catch { return false; }
     }
 
     private async openInEditor(filePath: string): Promise<void> {
@@ -1262,12 +1595,7 @@ export class WorkspaceManager {
         }
     }
 
-    private postUpdate(): void {
-        const payload = this.buildPayload();
-        OperationPanelViewProvider.postMessage({ type: 'updateView', data: payload });
-        DesignTreeViewProvider.postMessage({ type: 'updateView', data: payload });
-    }
-
+    /** Build the operation-panel payload (based on projectRoot / actual project). */
     private buildPayload(): UpdateViewPayload {
         return {
             nodes: this.nodes,
@@ -1284,16 +1612,24 @@ export class WorkspaceManager {
         };
     }
 
-    /** Draft-first check: true if data_structures.py exists in staging OR in realCodeDir. */
-    private _hasActualDS(): boolean {
-        if (!this.projectRoot) return false;
-        try {
-            const projectAbs = this.projectRoot.absolutePath;
-            const stagingPath = actualDSStagingPath(this.codesStagingDir(projectAbs), 'python');
-            if (fs.existsSync(stagingPath)) return true;
-            const realCodeDir = path.join(settings.getCodesPath(), path.basename(projectAbs));
-            return fs.existsSync(actualDSRealPath(realCodeDir, 'python'));
-        } catch { return false; }
+    /** Build the design-tree payload (based on workspaceRoot / draft overlay). */
+    private buildDesignTreePayload(): UpdateViewPayload {
+        return {
+            nodes: this.dtNodes,
+            leafOrder: [],
+            currentModule: this.dtCurrentModule,
+            refinementHistories: {},
+            currentRefinementEntry: -1,
+            moduleStatuses: {},
+            isBusy: this.isBusy,
+            hasCommonDS: false,
+            hasActualDS: false
+        };
+    }
+
+    private postUpdate(): void {
+        OperationPanelViewProvider.postMessage({ type: 'updateView', data: this.buildPayload() });
+        DesignTreeViewProvider.postMessage({ type: 'updateView', data: this.buildDesignTreePayload() });
     }
 }
 

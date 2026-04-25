@@ -10,24 +10,19 @@
 
 <body>
     <div id="tree-root" class="tree-root">
-        <div class="tree-toolbar-zone" aria-hidden="true"></div>
-        <div class="tree-toolbar" aria-label="缩放工具">
-            <button type="button" id="zoom-in-btn" class="tree-toolbar-btn" title="放大" aria-label="放大">
+        <!-- Save toolbar (bottom-right) -->
+        <div class="save-toolbar-zone" aria-hidden="true"></div>
+        <div class="save-toolbar" aria-label="保存工具">
+            <button type="button" id="save-btn" class="tree-toolbar-btn save-btn" title="保存设计树" aria-label="保存设计树">
                 <svg viewBox="0 0 16 16" aria-hidden="true">
-                    <circle cx="6.5" cy="6.5" r="4.25"></circle>
-                    <path d="M9.75 9.75L13.25 13.25"></path>
-                    <path d="M6.5 4.5V8.5"></path>
-                    <path d="M4.5 6.5H8.5"></path>
+                    <path d="M13.5 1.5H3.5A2 2 0 0 0 1.5 3.5v9A2 2 0 0 0 3.5 14.5h9A2 2 0 0 0 14.5 12.5V2.5L13.5 1.5Z"></path>
+                    <path d="M4.5 1.5v4h7v-4"></path>
+                    <rect x="5.5" y="8.5" width="5" height="5" rx="0.5"></rect>
                 </svg>
-            </button>
-            <button type="button" id="zoom-out-btn" class="tree-toolbar-btn" title="缩小" aria-label="缩小">
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                    <circle cx="6.5" cy="6.5" r="4.25"></circle>
-                    <path d="M9.75 9.75L13.25 13.25"></path>
-                    <path d="M4.5 6.5H8.5"></path>
-                </svg>
+                <span class="save-btn-label">保存</span>
             </button>
         </div>
+
         <div id="tree-scroll" class="tree-scroll">
             <div id="tree-stage" class="tree-stage">
                 <div id="tree-canvas" class="tree-canvas"></div>

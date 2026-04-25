@@ -54,20 +54,22 @@ body {
 
 .tree-root svg { display: block; }
 
-.tree-toolbar-zone {
+/* ─── Save toolbar (bottom-right, hover-reveal) ──────────────────────────── */
+.save-toolbar-zone {
     position: absolute;
-    top: 0;
+    bottom: 0;
     right: 0;
     z-index: 4;
     width: 92px;
-    height: 86px;
+    height: 56px;
+    pointer-events: auto;
 }
 
-.tree-toolbar {
+.save-toolbar {
     position: absolute;
-    top: 12px;
-    right: 12px;
     z-index: 5;
+    bottom: 12px;
+    right: 12px;
     display: inline-flex;
     gap: 6px;
     padding: 4px;
@@ -77,33 +79,37 @@ body {
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
     backdrop-filter: blur(6px);
     opacity: 0;
-    transform: translateY(-4px);
     pointer-events: none;
-    transition: opacity 0.16s ease, transform 0.16s ease, border-color 0.12s ease;
+    transform: translateY(4px);
+    transition: opacity 0.16s ease, transform 0.16s ease;
 }
 
-.tree-toolbar-zone:hover + .tree-toolbar,
-.tree-toolbar:hover,
-.tree-toolbar:focus-within {
+.save-toolbar-zone:hover + .save-toolbar,
+.save-toolbar:hover,
+.save-toolbar:focus-within {
     opacity: 1;
-    transform: translateY(0);
     pointer-events: auto;
+    transform: translateY(0);
 }
 
 .tree-toolbar-btn {
-    width: 28px;
     height: 28px;
-    padding: 0;
+    padding: 0 6px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: 4px;
     border: 1px solid transparent;
     border-radius: 6px;
     background: transparent;
     color: var(--vscode-icon-foreground, var(--vscode-descriptionForeground, #9d9d9d));
     cursor: pointer;
     transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+    white-space: nowrap;
+    font-family: var(--vscode-font-family);
+    font-size: 11px;
 }
+
 
 .tree-toolbar-btn:hover {
     background: color-mix(in srgb, var(--vscode-toolbar-hoverBackground, #2a2d2e) 72%, transparent);
@@ -123,12 +129,18 @@ body {
 .tree-toolbar-btn svg {
     width: 16px;
     height: 16px;
+    flex-shrink: 0;
     overflow: visible;
     stroke: currentColor;
     stroke-width: 1.35;
     stroke-linecap: round;
     stroke-linejoin: round;
     fill: none;
+}
+
+.save-btn-label {
+    font-size: 11px;
+    line-height: 1;
 }
 
 /* ─── SVG nodes ──────────────────────────────────────────────────────────── */
@@ -141,10 +153,6 @@ body {
 .tree-node.node-root       rect { fill: var(--node-root-bg); }
 .tree-node.node-non-leaf   rect { fill: var(--node-nonleaf-bg); }
 .tree-node.node-leaf       rect { fill: var(--node-leaf-bg); stroke: #4ec9b0; stroke-width: 1.5px; }
-.tree-node.node-common-ds        rect { fill: var(--node-nonleaf-bg); stroke: #e8a020; stroke-width: 1.5px; }
-.tree-node.node-common-ds:active rect { stroke: #f5c842; stroke-width: 2.5px; opacity: 0.75; }
-.tree-node.node-actual-ds        rect { fill: var(--node-nonleaf-bg); stroke: #f14c4c; stroke-width: 1.5px; }
-.tree-node.node-actual-ds:active rect { stroke: #ff7070; stroke-width: 2.5px; opacity: 0.75; }
 
 .tree-node.selected rect {
     stroke: var(--node-selected-outline);
@@ -203,3 +211,77 @@ body {
 
 .node-inner-selected .node-title,
 .node-inner-selected .node-desc { color: #ffffff; }
+
+/* ─── Node action bar (hover buttons on divide-eligible nodes) ───────────── */
+.node-action-bar-fo {
+    overflow: visible;
+    pointer-events: none;
+}
+
+/* Show the action bar only when the parent tree-node group is hovered. */
+.tree-node .node-action-bar-fo { pointer-events: none; }
+.tree-node:hover .node-action-bar-fo { pointer-events: auto; }
+
+.node-action-bar {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 4px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--vscode-panel-border, #454545) 74%, transparent);
+    background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 90%, transparent);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+    backdrop-filter: blur(6px);
+    opacity: 0;
+    transform: translateX(-4px);
+    pointer-events: none;
+    transition: opacity 0.16s ease, transform 0.16s ease;
+    font-family: var(--vscode-font-family, sans-serif);
+}
+
+/* Reveal on parent hover */
+.tree-node:hover .node-action-bar {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+}
+
+.action-bar-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    min-height: 22px;
+    padding: 2px 4px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--vscode-icon-foreground, var(--vscode-descriptionForeground, #9d9d9d));
+    cursor: pointer;
+    font-size: 11px;
+    font-family: var(--vscode-font-family, sans-serif);
+    white-space: nowrap;
+    line-height: 1.2;
+    transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.action-bar-btn:hover {
+    background: color-mix(in srgb, var(--vscode-toolbar-hoverBackground, #2a2d2e) 72%, transparent);
+    color: var(--vscode-foreground, #cccccc);
+    border-color: color-mix(in srgb, var(--vscode-panel-border, #454545) 60%, transparent);
+}
+
+.action-bar-btn:focus-visible {
+    outline: none;
+    border-color: var(--vscode-focusBorder, #007acc);
+}
+
+.action-bar-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}

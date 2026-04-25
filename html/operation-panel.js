@@ -187,14 +187,12 @@
     };
 
     const ButtonBar = {
-        divideBtn: null,
         refineMainBtn: null,
         refineDropdownBtn: null,
         refineSelectedLabel: null,
         refineDropdown: null,
         generateBtn: null,
         rollbackBtn: null,
-        confirmBtn: null,
         selectedRefineAction: 'refine',
         refineActionLabels: {
             refine: '全局精化',
@@ -206,23 +204,14 @@
                 Messenger.executeCommand('showDesignTree', {});
             });
 
-            this.divideBtn = document.getElementById('divide-btn');
             this.refineMainBtn = document.getElementById('refine-main-btn');
             this.refineDropdownBtn = document.getElementById('refine-dropdown-btn');
             this.refineSelectedLabel = document.getElementById('refine-selected-label');
             this.refineDropdown = document.getElementById('refine-dropdown');
             this.generateBtn = document.getElementById('generate-btn');
             this.rollbackBtn = document.getElementById('rollback-btn');
-            this.confirmBtn = document.getElementById('confirm-btn');
 
             this._syncRefineSelectionUi();
-
-            this.divideBtn.addEventListener('click', () => {
-                Messenger.executeCommand('divide', {
-                    index: State.currentModule,
-                    customPrompt: PromptInput.consume()
-                });
-            });
 
             this.refineMainBtn.addEventListener('click', () => {
                 Messenger.executeCommand(this.selectedRefineAction, {
@@ -266,10 +255,6 @@
                 });
             });
 
-            this.confirmBtn.addEventListener('click', () => {
-                Messenger.executeCommand('confirm', {});
-            });
-
             document.addEventListener('click', () => {
                 this.refineDropdown.classList.add('hidden');
                 this.refineDropdownBtn.setAttribute('aria-expanded', 'false');
@@ -280,21 +265,16 @@
             const busy = State.isBusy;
             const mi = State.currentModule;
 
-            this.divideBtn.disabled = busy;
             this.refineMainBtn.disabled = busy;
             this.refineDropdownBtn.disabled = busy;
             this.generateBtn.disabled = busy;
             this.rollbackBtn.disabled = busy;
-            this.confirmBtn.disabled = busy;
             PromptInput.setDisabled(busy);
 
             if (!busy) {
                 const nodeData = mi >= 0 ? State.nodes[mi] : null;
                 const isLeafModule = nodeData && nodeData.nodeType === 'leaf'
                     && State.leafOrder.includes(mi);
-                const isUndividedRoot = nodeData && nodeData.nodeType === 'root'
-                    && State.leafOrder.length === 0;
-                this.divideBtn.disabled = !(isLeafModule || isUndividedRoot);
 
                 const history = mi >= 0 ? State.refinementHistories[mi] : null;
                 const hasCode = history && history.some(e => e.type === 'code');
@@ -311,13 +291,13 @@
 
                 const showRefineAndGenerate =
                     isLeafModule && isViewingLast && moduleStatus === 'inProgress';
-                const showRollbackOnly =
-                    isLeafModule && hasSelectedEntry && (!isViewingLast || moduleStatus === 'completed' || moduleStatus === 'pending');
+                // const showRollbackOnly =
+                //     isLeafModule && hasSelectedEntry && (!isViewingLast || moduleStatus === 'completed' || moduleStatus === 'pending');
 
-                this.refineMainBtn.style.display = showRefineAndGenerate ? '' : 'none';
-                this.refineDropdownBtn.style.display = showRefineAndGenerate ? '' : 'none';
-                this.generateBtn.style.display = showRefineAndGenerate ? '' : 'none';
-                this.rollbackBtn.style.display = (showRefineAndGenerate || showRollbackOnly) ? '' : 'none';
+                // this.refineMainBtn.style.display = showRefineAndGenerate ? '' : 'none';
+                // this.refineDropdownBtn.style.display = showRefineAndGenerate ? '' : 'none';
+                // this.generateBtn.style.display = showRefineAndGenerate ? '' : 'none';
+                // this.rollbackBtn.style.display = (showRefineAndGenerate || showRollbackOnly) ? '' : 'none';
 
                 this.refineMainBtn.disabled = !showRefineAndGenerate || !canOperate;
                 this.refineDropdownBtn.disabled = !showRefineAndGenerate || !canOperate;
