@@ -64,6 +64,15 @@ export class DesignTreeViewProvider {
                     await wm.addChildNode(p?.index ?? -1);
                     break;
 
+                case 'confirmAddChildNode':
+                    await wm.confirmAddChildNode(
+                        p?.index ?? -1,
+                        p?.name ?? '',
+                        p?.description ?? '',
+                        Array.isArray(p?.dependencies) ? p.dependencies : []
+                    );
+                    break;
+
                 case 'save':
                     await wm.saveDesignTree();
                     break;
@@ -76,9 +85,24 @@ export class DesignTreeViewProvider {
     }
 
     public static postMessage(message: WebviewOutgoingMessage): void {
-        DesignTreeViewProvider._lastPayload = message;
+        if (message.type === 'updateView') {
+            DesignTreeViewProvider._lastPayload = message;
+        }
         if (DesignTreeViewProvider.currentPanel) {
             DesignTreeViewProvider.currentPanel.webview.postMessage(message);
+        }
+    }
+
+    public static showAddNodeDialog(
+        nodeIndex: number,
+        parentName: string,
+        availableModules: string[]
+    ): void {
+        if (DesignTreeViewProvider.currentPanel) {
+            DesignTreeViewProvider.currentPanel.webview.postMessage({
+                type: 'showAddNodeDialog',
+                data: { nodeIndex, parentName, availableModules }
+            });
         }
     }
 

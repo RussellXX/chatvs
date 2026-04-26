@@ -228,17 +228,194 @@
             }
         },
 
-        _esc(s) {
-            if (!s) return '';
-            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        _esc(s) { return _esc(s); }
+    };
+
+    // ── Shared escape helper ──────────────────────────────────────────────────
+    function _esc(s) {
+        if (!s) return '';
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function _dropdownNavigate(dd, dir) {
+        const items = Array.from(dd.querySelectorAll('[data-value]'));
+        if (!items.length) return;
+        const cur = items.findIndex(el => el.classList.contains('active'));
+        const next = Math.max(0, Math.min(items.length - 1, cur + dir));
+        items.forEach(el => el.classList.remove('active'));
+        items[next].classList.add('active');
+        items[next].scrollIntoView({ block: 'nearest' });
+    }
+
+    // ── Add-node dialog (inline overlay) ─────────────────────────────────────
+    const DialogManager = {
+        _nodeIndex: -1,
+        _selectedDeps: [],
+        _availableModules: [],
+
+        show(nodeIndex, parentName, availableModules) {
+            this._nodeIndex = nodeIndex;
+            this._selectedDeps = [];
+            this._availableModules = availableModules || [];
+
+            _id('add-node-parent-hint').textContent =
+                parentName ? `将作为 "${parentName}" 的子节点` : '';
+            _id('add-node-name').value = '';
+            _id('add-node-desc').value = '';
+            _id('add-node-tag-input').value = '';
+            _id('add-node-name-err').hidden = true;
+            this._renderTags();
+            this._hideDropdown();
+
+            _id('add-node-overlay').hidden = false;
+            setTimeout(() => _id('add-node-name').focus(), 50);
+        },
+
+        hide() {
+            _id('add-node-overlay').hidden = true;
+            this._nodeIndex = -1;
+            this._selectedDeps = [];
+        },
+
+        _renderTags() {
+            const box   = _id('add-node-tag-box');
+            const input = _id('add-node-tag-input');
+            box.querySelectorAll('.add-node-tag').forEach(t => t.remove());
+            this._selectedDeps.forEach((dep, i) => {
+                const tag = document.createElement('span');
+                tag.className = 'add-node-tag';
+                tag.innerHTML =
+                    `<span title="${_esc(dep)}">${_esc(dep)}</span>` +
+                    `<button class="add-node-tag-remove" data-idx="${i}" tabindex="-1">×</button>`;
+                box.insertBefore(tag, input);
+            });
+        },
+
+        _addDep(name) {
+            const t = name.trim();
+            if (!t || this._selectedDeps.includes(t)) return;
+            this._selectedDeps.push(t);
+            this._renderTags();
+            _id('add-node-tag-input').value = '';
+            this._hideDropdown();
+        },
+
+        _removeDep(idx) {
+            this._selectedDeps.splice(idx, 1);
+            this._renderTags();
+        },
+
+        _showDropdown(query) {
+            const q = query.toLowerCase();
+            const filtered = this._availableModules.filter(
+                m => m.toLowerCase().includes(q) && !this._selectedDeps.includes(m)
+            );
+            const dd = _id('add-node-dropdown');
+            if (!filtered.length) { this._hideDropdown(); return; }
+            dd.innerHTML = filtered
+                .map(m => `<div class="add-node-dropdown-item" data-value="${_esc(m)}">${_esc(m)}</div>`)
+                .join('');
+            dd.style.display = 'block';
+        },
+
+        _hideDropdown() { _id('add-node-dropdown').style.display = 'none'; },
+
+        submit() {
+            const nameEl = _id('add-node-name');
+            const errEl  = _id('add-node-name-err');
+            const name   = nameEl.value.trim();
+            if (!name) {
+                errEl.textContent = '模块名称不能为空。';
+                errEl.hidden = false;
+                nameEl.focus();
+                return;
+            }
+            if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+                errEl.textContent = '名称只能含字母、数字、下划线，且不以数字开头。';
+                errEl.hidden = false;
+                nameEl.focus();
+                return;
+            }
+            errEl.hidden = true;
+            vscode.postMessage({
+                type: 'executeCommand',
+                commandId: 'confirmAddChildNode',
+                payload: {
+                    index: this._nodeIndex,
+                    name,
+                    description: _id('add-node-desc').value.trim(),
+                    dependencies: this._selectedDeps.slice()
+                }
+            });
+            this.hide();
+        },
+
+        bindEvents() {
+            const tagInput  = _id('add-node-tag-input');
+            const tagBox    = _id('add-node-tag-box');
+            const dropdown  = _id('add-node-dropdown');
+            const self      = this;
+
+            _id('add-node-ok').addEventListener('click', () => self.submit());
+            _id('add-node-cancel').addEventListener('click', () => self.hide());
+
+            // Dismiss on backdrop click.
+            _id('add-node-overlay').addEventListener('click', e => {
+                if (e.target === _id('add-node-overlay')) self.hide();
+            });
+
+            _id('add-node-name').addEventListener('input', () => {
+                _id('add-node-name-err').hidden = true;
+            });
+
+            tagInput.addEventListener('input', () => self._showDropdown(tagInput.value));
+
+            tagInput.addEventListener('keydown', e => {
+                if (e.key === 'Enter' || e.key === ',') {
+                    e.preventDefault();
+                    const active = dropdown.querySelector('.add-node-dropdown-item.active');
+                    if (active) self._addDep(active.dataset.value);
+                    else if (tagInput.value.trim()) self._addDep(tagInput.value);
+                } else if (e.key === 'Backspace' && !tagInput.value && self._selectedDeps.length) {
+                    self._removeDep(self._selectedDeps.length - 1);
+                } else if (e.key === 'ArrowDown') { e.preventDefault(); _dropdownNavigate(dropdown, 1); }
+                  else if (e.key === 'ArrowUp')   { e.preventDefault(); _dropdownNavigate(dropdown, -1); }
+                  else if (e.key === 'Escape')     { self._hideDropdown(); }
+            });
+
+            tagInput.addEventListener('blur', () => setTimeout(() => self._hideDropdown(), 150));
+
+            dropdown.addEventListener('mousedown', e => {
+                const item = e.target.closest('[data-value]');
+                if (!item) return;
+                e.preventDefault();
+                self._addDep(item.dataset.value);
+                tagInput.focus();
+            });
+
+            tagBox.addEventListener('click', e => {
+                const btn = e.target.closest('.add-node-tag-remove');
+                if (btn) { self._removeDep(parseInt(btn.dataset.idx, 10)); return; }
+                tagInput.focus();
+            });
         }
     };
+
+    function _id(id) { return document.getElementById(id); }
 
     // ── Message handler ───────────────────────────────────────────────────────
     function bindMessageHandler() {
         window.addEventListener('message', event => {
             const msg = event.data;
-            if (!msg || msg.type !== 'updateView') return;
+            if (!msg) return;
+
+            if (msg.type === 'showAddNodeDialog') {
+                const { nodeIndex, parentName, availableModules } = msg.data || {};
+                DialogManager.show(nodeIndex, parentName, availableModules);
+                return;
+            }
+
+            if (msg.type !== 'updateView') return;
             State.update(msg.data || {});
 
             TreeView.render(
@@ -266,7 +443,6 @@
                 }
             );
 
-            // Keep save button in sync with isBusy state.
             TreeView._updateSaveButton();
         });
     }
@@ -274,6 +450,7 @@
     // ── Bootstrap ─────────────────────────────────────────────────────────────
     function main() {
         TreeView.init('tree-root');
+        DialogManager.bindEvents();
         bindMessageHandler();
         vscode.postMessage({ type: 'webviewReady' });
     }
