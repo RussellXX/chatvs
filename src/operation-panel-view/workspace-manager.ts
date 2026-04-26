@@ -693,6 +693,10 @@ export class WorkspaceManager {
         }) as (ModuleNode | RequirementNode)[];
         this.fixParentRefs(this.projectRoot);
 
+        // Rebuild real ongoing manifest from the actual tree/content so
+        // operation-panel topology uses the latest dependencies.
+        this._rewriteRealOngoingFromProjectTree();
+
         this.rebuildDerivedState();
 
         DesignmentTreeDataProvider.getInstance().refresh(undefined);
@@ -753,6 +757,12 @@ export class WorkspaceManager {
             }
         } else {
             this._pendingRealDeletes.add(targetPath);
+        }
+
+        // If deleting this subtree makes the parent a leaf again, restore the
+        // parent module entry into draft manifests so topology can include it.
+        if (parent instanceof ModuleNode && parent.isLeaf()) {
+            this._ensureLeafSpecInDraftManifests(parent);
         }
 
         this.rebuildDesignTreeState();
@@ -845,6 +855,9 @@ export class WorkspaceManager {
         this.currentModule = nodeIndex;
         this.currentRefinementEntry = -1;
 
+        const selectedPath = this.indexToPath.get(nodeIndex);
+        this.dtCurrentModule = selectedPath ? this._findDesignTreeIndexByPath(selectedPath) : -1;
+
         if (this.leafModuleIndices.has(nodeIndex)) {
             const history = this.refinementHistories[nodeIndex];
             if (history && history.length > 0) {
@@ -869,6 +882,16 @@ export class WorkspaceManager {
         this.dtCurrentModule = nodeIndex;
 
         const absPath = this.dtIndexToPath.get(nodeIndex);
+        const opIndex = absPath ? this._findOperationIndexByPath(absPath) : -1;
+        this.currentModule = opIndex;
+        this.currentRefinementEntry = -1;
+        if (opIndex >= 0) {
+            const history = this.refinementHistories[opIndex];
+            if (history && history.length > 0) {
+                this.currentRefinementEntry = this.getActiveRefinementIndex(history);
+            }
+        }
+
         if (absPath) {
             const contentFile = path.join(absPath, 'content.txt');
             if (fs.existsSync(contentFile)) {
@@ -943,6 +966,91 @@ export class WorkspaceManager {
 
         writeJsonAtomically(modulesDraftPath, clean(readJsonDraftFirst(projectAbs, modulesRealPath)));
         writeJsonAtomically(ongoingDraftPath, clean(readJsonDraftFirst(projectAbs, ongoingRealPath)));
+    }
+
+    /** Ensure a leaf module has a spec entry in draft manifests (upsert by name). */
+    private _ensureLeafSpecInDraftManifests(moduleNode: ModuleNode): void {
+        if (!this.projectRoot) return;
+
+        const projectAbs       = this.projectRoot.absolutePath;
+        const modulesRealPath  = path.join(projectAbs, 'modules.json');
+        const ongoingRealPath  = path.join(projectAbs, 'ongoing_leaf_modules.json');
+        const modulesDraftPath = toDraftPath(projectAbs, modulesRealPath);
+        const ongoingDraftPath = toDraftPath(projectAbs, ongoingRealPath);
+
+        const spec = this._buildModuleSpec(moduleNode);
+        const upsertByName = (arr: any[]) => {
+            const idx = arr.findIndex((m: any) => m?.name === spec.name);
+            if (idx >= 0) arr[idx] = { ...arr[idx], ...spec };
+            else arr.push(spec);
+            return arr;
+        };
+
+        writeJsonAtomically(modulesDraftPath, upsertByName(readJsonDraftFirst(projectAbs, modulesRealPath)));
+        writeJsonAtomically(ongoingDraftPath, upsertByName(readJsonDraftFirst(projectAbs, ongoingRealPath)));
+    }
+
+    /** Build a manifest spec object from a module node's current content file. */
+    private _buildModuleSpec(moduleNode: ModuleNode): DivisionModuleSpec {
+        const fullName = moduleNode.getPrefix();
+        const contentPath = path.join(moduleNode.absolutePath, 'content.txt');
+
+        let description = '';
+        let dependencies: string[] = [];
+        if (fs.existsSync(contentPath)) {
+            try {
+                const parsed = JSON.parse(fs.readFileSync(contentPath, 'utf8'));
+                description = typeof parsed?.description === 'string' ? parsed.description : '';
+                dependencies = Array.isArray(parsed?.dependencies)
+                    ? parsed.dependencies.filter((d: unknown): d is string => typeof d === 'string')
+                    : [];
+            } catch {
+                description = '';
+                dependencies = [];
+            }
+        }
+
+        return {
+            name: fullName,
+            description,
+            dependencies,
+            path: path.join(this.projectRoot!.label, fullName.replace(/\./g, path.sep))
+        };
+    }
+
+    /** Map an operation-panel node path to design-tree index (supports real/draft equivalence). */
+    private _findDesignTreeIndexByPath(absPath: string): number {
+        if (!this.projectRoot) return -1;
+        const projectAbs = this.projectRoot.absolutePath;
+        const targetNorm = normPath(absPath);
+        const targetReal = isDraftPath(projectAbs, absPath)
+            ? normPath(toRealPath(projectAbs, absPath))
+            : targetNorm;
+
+        for (const [idx, dtPath] of this.dtIndexToPath.entries()) {
+            const dtNorm = normPath(dtPath);
+            if (dtNorm === targetNorm) return idx;
+
+            const dtReal = isDraftPath(projectAbs, dtPath)
+                ? normPath(toRealPath(projectAbs, dtPath))
+                : dtNorm;
+            if (dtReal === targetReal) return idx;
+        }
+        return -1;
+    }
+
+    /** Map a design-tree node path to operation-panel index (supports real/draft equivalence). */
+    private _findOperationIndexByPath(absPath: string): number {
+        if (!this.projectRoot) return -1;
+        const projectAbs = this.projectRoot.absolutePath;
+        const targetReal = isDraftPath(projectAbs, absPath)
+            ? normPath(toRealPath(projectAbs, absPath))
+            : normPath(absPath);
+
+        for (const [idx, opPath] of this.indexToPath.entries()) {
+            if (normPath(opPath) === targetReal) return idx;
+        }
+        return -1;
     }
 
     /**
@@ -1376,6 +1484,8 @@ export class WorkspaceManager {
      * Also calls rebuildDesignTreeState() to refresh the design-tree view.
      */
     private rebuildDerivedState(): void {
+        const prevSelectedPath = this.indexToPath.get(this.currentModule);
+
         if (!this.projectRoot) {
             this.nodes = [];
             this.leafOrder = [];
@@ -1389,6 +1499,7 @@ export class WorkspaceManager {
         const nodes: TreeNodeData[] = [];
         const indexToPath = new Map<number, string>();
         const pathToIndex = new Map<string, number>();
+        const leafNameToIndex = new Map<string, number>();
         const leafModuleIndices = new Set<number>();
 
         const serialize = (node: DesignmentTreeNode) => {
@@ -1407,7 +1518,10 @@ export class WorkspaceManager {
             } else {
                 moduleChildren = (node as ModuleNode).children;
                 nodeType = moduleChildren.length === 0 ? 'leaf' : 'non-leaf';
-                if (nodeType === 'leaf') leafModuleIndices.add(idx);
+                if (nodeType === 'leaf') {
+                    leafModuleIndices.add(idx);
+                    leafNameToIndex.set((node as ModuleNode).getPrefix(), idx);
+                }
             }
 
             nodes.push({
@@ -1427,26 +1541,16 @@ export class WorkspaceManager {
         this.indexToPath = indexToPath;
         this.leafModuleIndices = leafModuleIndices;
 
-        // Use real ongoing_leaf_modules.json for OP topology.
-        const pseudoPath = settings.getPseudoPath();
-        const projectAbs = this.projectRoot.absolutePath;
-        const ongoingPath = this.resolveOngoingPath(projectAbs);
-
-        if (fs.existsSync(ongoingPath)) {
-            try {
-                const raw = JSON.parse(fs.readFileSync(ongoingPath, 'utf8'));
-                const sorted = topoSortLeafModules(raw);
-                this.leafOrder = sorted
-                    .map((m: any) => {
-                        const realP = path.join(pseudoPath, m.path);
-                        return pathToIndex.get(realP) ?? -1;
-                    })
-                    .filter(i => i >= 0);
-            } catch (err) {
-                console.warn('[WorkspaceManager] 叶子拓扑排序失败，回退为树前序：', err);
-                this.leafOrder = [...leafModuleIndices];
-            }
-        } else {
+        // Compute OP topology from current leaf content specs (authoritative),
+        // instead of trusting potentially stale manifest order.
+        try {
+            const leafSpecs = this._collectLeafSpecsFromProjectTree(this.projectRoot);
+            const sorted = topoSortLeafModules(leafSpecs);
+            this.leafOrder = sorted
+                .map((m: any) => leafNameToIndex.get(m.name) ?? -1)
+                .filter(i => i >= 0);
+        } catch (err) {
+            console.warn('[WorkspaceManager] 叶子拓扑排序失败，回退为树前序：', err);
             this.leafOrder = [...leafModuleIndices];
         }
 
@@ -1506,7 +1610,50 @@ export class WorkspaceManager {
 
         this.moduleStatuses = statuses;
 
+        if (prevSelectedPath) {
+            const remapped = [...this.indexToPath.entries()]
+                .find(([, p]) => normPath(p) === normPath(prevSelectedPath));
+            this.currentModule = remapped ? remapped[0] : -1;
+        } else {
+            this.currentModule = -1;
+        }
+
         this.rebuildDesignTreeState();
+    }
+
+    /** Collect leaf module specs from current real project tree/content files. */
+    private _collectLeafSpecsFromProjectTree(root: ProjectNode): DivisionModuleSpec[] {
+        const specs: DivisionModuleSpec[] = [];
+
+        const walk = (node: ProjectNode | ModuleNode) => {
+            const kids = (node instanceof ProjectNode
+                ? node.children.filter(c => c instanceof ModuleNode)
+                : node.children) as ModuleNode[];
+
+            if (node instanceof ModuleNode && kids.length === 0) {
+                specs.push(this._buildModuleSpec(node));
+                return;
+            }
+            for (const child of kids) walk(child);
+        };
+
+        walk(root);
+        return specs;
+    }
+
+    /** Rewrite real ongoing_leaf_modules.json from current project tree/content. */
+    private _rewriteRealOngoingFromProjectTree(): void {
+        if (!this.projectRoot) return;
+        const projectAbs = this.projectRoot.absolutePath;
+        const ongoingPath = this.resolveOngoingPath(projectAbs);
+
+        try {
+            const leafSpecs = this._collectLeafSpecsFromProjectTree(this.projectRoot);
+            const sorted = topoSortLeafModules(leafSpecs);
+            writeJsonAtomically(ongoingPath, sorted);
+        } catch (err) {
+            console.warn('[WorkspaceManager] 重建 ongoing_leaf_modules.json 失败:', err);
+        }
     }
 
     /**
@@ -1514,6 +1661,8 @@ export class WorkspaceManager {
      * This is the only state sent to the design-tree panel.
      */
     private rebuildDesignTreeState(): void {
+        const prevSelectedPath = this.dtIndexToPath.get(this.dtCurrentModule);
+
         if (!this.workspaceRoot) {
             this.dtNodes = [];
             this.dtCurrentModule = -1;
@@ -1559,7 +1708,30 @@ export class WorkspaceManager {
         this.dtNodes = nodes;
         this.dtIndexToPath = indexToPath;
 
-        if (this.dtCurrentModule >= this.dtNodes.length) {
+        if (prevSelectedPath) {
+            const projectAbs = this.projectRoot?.absolutePath;
+            const prevNorm = normPath(prevSelectedPath);
+            const prevReal = projectAbs && isDraftPath(projectAbs, prevSelectedPath)
+                ? normPath(toRealPath(projectAbs, prevSelectedPath))
+                : prevNorm;
+
+            let remapped = -1;
+            for (const [idx, p] of this.dtIndexToPath.entries()) {
+                const pn = normPath(p);
+                if (pn === prevNorm) {
+                    remapped = idx;
+                    break;
+                }
+                if (projectAbs) {
+                    const pr = isDraftPath(projectAbs, p) ? normPath(toRealPath(projectAbs, p)) : pn;
+                    if (pr === prevReal) {
+                        remapped = idx;
+                        break;
+                    }
+                }
+            }
+            this.dtCurrentModule = remapped;
+        } else {
             this.dtCurrentModule = -1;
         }
     }
