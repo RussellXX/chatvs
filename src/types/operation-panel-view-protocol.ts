@@ -35,7 +35,16 @@ export interface UpdateViewMessage {
     data: UpdateViewPayload;
 }
 
-export type WebviewOutgoingMessage = UpdateViewMessage;
+export interface ShowAddNodeDialogMessage {
+    type: 'showAddNodeDialog';
+    data: {
+        nodeIndex: number;
+        parentName: string;
+        availableModules: string[];
+    };
+}
+
+export type WebviewOutgoingMessage = UpdateViewMessage | ShowAddNodeDialogMessage;
 
 // 前端 → 后端 消息
 
@@ -49,6 +58,7 @@ export type WebviewCommandId =
     | 'divide'
     | 'deleteNode'
     | 'addChildNode'
+    | 'confirmAddChildNode'
     | 'save'
     | 'refine'
     | 'localRefine'

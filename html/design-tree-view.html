@@ -23,6 +23,44 @@
             </button>
         </div>
 
+        <!-- ── Add-node dialog overlay ────────────────────────────────── -->
+        <div id="add-node-overlay" class="add-node-overlay" hidden>
+            <div class="add-node-dialog" role="dialog" aria-modal="true">
+                <p class="add-node-title">新增子节点</p>
+                <p id="add-node-parent-hint" class="add-node-parent-hint"></p>
+
+                <div class="add-node-field">
+                    <label class="add-node-label" for="add-node-name">模块名称 <span class="add-node-req">*</span></label>
+                    <input type="text" id="add-node-name" class="add-node-input"
+                           placeholder="输入模块名称（如 moduleA）" autocomplete="off" spellcheck="false">
+                    <span id="add-node-name-err" class="add-node-err" hidden>名称不能为空。</span>
+                </div>
+
+                <div class="add-node-field">
+                    <label class="add-node-label" for="add-node-desc">模块描述</label>
+                    <textarea id="add-node-desc" class="add-node-textarea"
+                              placeholder="简要描述该模块的功能（可选）"></textarea>
+                </div>
+
+                <div class="add-node-field">
+                    <label class="add-node-label">依赖的其它模块</label>
+                    <div class="add-node-tag-wrap">
+                        <div id="add-node-tag-box" class="add-node-tag-box">
+                            <input type="text" id="add-node-tag-input" class="add-node-tag-text"
+                                   placeholder="输入后按 Enter 或逗号添加" autocomplete="off" spellcheck="false">
+                        </div>
+                        <div id="add-node-dropdown" class="add-node-dropdown"></div>
+                    </div>
+                    <span class="add-node-hint-sm">从列表选择或手动输入后按 Enter / 逗号确认</span>
+                </div>
+
+                <div class="add-node-btns">
+                    <button id="add-node-cancel" class="add-node-btn add-node-btn-sec">取消</button>
+                    <button id="add-node-ok"     class="add-node-btn add-node-btn-pri">确定</button>
+                </div>
+            </div>
+        </div>
+
         <div id="tree-scroll" class="tree-scroll">
             <div id="tree-stage" class="tree-stage">
                 <div id="tree-canvas" class="tree-canvas"></div>

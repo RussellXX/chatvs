@@ -36,7 +36,6 @@ import {
 } from './draft-overlay';
 import { CommonDSManager } from './common-ds-manager';
 import { generateActualDS, actualDSRealPath } from './actual-ds-generator';
-import { AddNodeDialogProvider } from './add-node-dialog-provider';
 import * as Diff from 'diff';
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -770,8 +769,8 @@ export class WorkspaceManager {
     }
 
     /**
-     * Show the add-child-node dialog and, on confirmation, create a new leaf
-     * node in the workspace draft under the given parent node.
+     * Send the add-child-node dialog data to the design-tree webview.
+     * Actual node creation happens in confirmAddChildNode() after the user confirms.
      */
     async addChildNode(nodeIndex: number): Promise<void> {
         if (this.isBusy || !this.projectRoot || !this.workspaceRoot) return;
@@ -782,35 +781,47 @@ export class WorkspaceManager {
         const node = this.findNode(this.workspaceRoot, targetPath);
         if (!node) return;
 
-        const parentNode = node as ProjectNode | ModuleNode;
-        const isRoot = parentNode instanceof ProjectNode;
-
-        const namePrefix = isRoot ? '' : (parentNode as ModuleNode).getPrefix() + '.';
+        const parentNode     = node as ProjectNode | ModuleNode;
         const availableLeaves = this._getWorkspaceLeafNames(
             parentNode instanceof ModuleNode ? parentNode : undefined
         );
 
-        const result = await AddNodeDialogProvider.show(
-            this.context.extensionUri,
-            parentNode.label,
-            availableLeaves
-        );
-        if (!result) return;
+        DesignTreeViewProvider.showAddNodeDialog(nodeIndex, parentNode.label, availableLeaves);
+    }
 
-        const childShortName = result.name;
-        const childFullName  = namePrefix + childShortName;
+    /**
+     * Create a new child node in the workspace draft after the user confirms
+     * the add-node dialog (sent back as confirmAddChildNode command).
+     */
+    async confirmAddChildNode(
+        nodeIndex: number,
+        name: string,
+        description: string,
+        dependencies: string[]
+    ): Promise<void> {
+        if (!this.projectRoot || !this.workspaceRoot) return;
+
+        const targetPath = this.dtIndexToPath.get(nodeIndex);
+        if (!targetPath) return;
+
+        const node = this.findNode(this.workspaceRoot, targetPath);
+        if (!node) return;
+
+        const parentNode     = node as ProjectNode | ModuleNode;
+        const isRoot         = parentNode instanceof ProjectNode;
+        const namePrefix     = isRoot ? '' : (parentNode as ModuleNode).getPrefix() + '.';
+        const childFullName  = namePrefix + name;
         const projectAbs     = this.projectRoot.absolutePath;
 
         const realParentPath = isDraftPath(projectAbs, targetPath)
             ? toRealPath(projectAbs, targetPath)
             : targetPath;
-        const childRealPath  = path.join(realParentPath, childShortName);
-        const childDraftPath = toDraftPath(projectAbs, childRealPath);
+        const childDraftPath = toDraftPath(projectAbs, path.join(realParentPath, name));
 
         const spec: DivisionModuleSpec = {
             name:         childFullName,
-            description:  result.description,
-            dependencies: result.dependencies,
+            description,
+            dependencies,
             path:         path.join(this.projectRoot.label, childFullName.replace(/\./g, path.sep))
         };
 
@@ -821,7 +832,6 @@ export class WorkspaceManager {
             'utf8'
         );
 
-        // Update draft manifests.
         const modulesRealPath  = path.join(projectAbs, 'modules.json');
         const ongoingRealPath  = path.join(projectAbs, 'ongoing_leaf_modules.json');
         const modulesDraftPath = toDraftPath(projectAbs, modulesRealPath);
@@ -830,10 +840,9 @@ export class WorkspaceManager {
         let allModules: any[] = readJsonDraftFirst(projectAbs, modulesRealPath);
         let ongoing: any[]    = readJsonDraftFirst(projectAbs, ongoingRealPath);
 
-        // If the parent was a leaf module, it is no longer a leaf — remove from ongoing.
         if (!isRoot && (parentNode as ModuleNode).isLeaf()) {
             const parentFullName = (parentNode as ModuleNode).getPrefix();
-            ongoing    = ongoing.filter((m: any)    => m.name !== parentFullName);
+            ongoing    = ongoing.filter((m: any) => m.name !== parentFullName);
             allModules = allModules.filter((m: any) => m.name !== parentFullName);
         }
 
@@ -843,7 +852,7 @@ export class WorkspaceManager {
         writeJsonAtomically(modulesDraftPath, allModules);
         writeJsonAtomically(ongoingDraftPath, ongoing);
 
-        const childNode = new ModuleNode(childShortName, childDraftPath, parentNode);
+        const childNode = new ModuleNode(name, childDraftPath, parentNode);
         (parentNode.children as any[]).push(childNode);
 
         this.rebuildDesignTreeState();
