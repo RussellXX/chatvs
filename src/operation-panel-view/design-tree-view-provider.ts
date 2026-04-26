@@ -76,6 +76,10 @@ export class DesignTreeViewProvider {
                 case 'save':
                     await wm.saveDesignTree();
                     break;
+
+                case 'resetWorkspace':
+                    await wm.resetWorkspace();
+                    break;
             }
         });
 

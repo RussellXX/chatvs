@@ -6,15 +6,13 @@
     // ── State ────────────────────────────────────────────────────────────────
     const State = {
         nodes: [],
-        currentModule: -1,
         isBusy: false,
         treeRoot: null,
 
         update(data) {
-            this.nodes         = Array.isArray(data.nodes) ? data.nodes : [];
-            this.currentModule = Number.isInteger(data.currentModule) ? data.currentModule : -1;
-            this.isBusy        = !!data.isBusy;
-            this.treeRoot      = TreeBuilder.build(this.nodes);
+            this.nodes    = Array.isArray(data.nodes) ? data.nodes : [];
+            this.isBusy   = !!data.isBusy;
+            this.treeRoot = TreeBuilder.build(this.nodes);
         }
     };
 
@@ -50,6 +48,7 @@
         stage: null,
         canvas: null,
         saveButton: null,
+        resetButton: null,
         baseWidth: 0,
         baseHeight: 0,
         scale: 1,
@@ -65,10 +64,11 @@
             this.stage = document.getElementById('tree-stage');
             this.canvas = document.getElementById('tree-canvas');
             this.saveButton = document.getElementById('save-btn');
+            this.resetButton = document.getElementById('reset-btn');
             this._bindEvents();
         },
 
-        render(rootData, selectedIndex, onNodeClick, onDivideClick, onAddChildClick, onDeleteClick) {
+        render(rootData, onNodeClick, onDivideClick, onAddChildClick, onDeleteClick) {
             this.canvas.innerHTML = '';
             this.baseWidth = 0;
             this.baseHeight = 0;
@@ -104,18 +104,15 @@
                     .target(l => [l.target.x, l.target.y])
                     .x(d => d[0]).y(d => d[1]));
 
-            const isSelected = d => d.data.originalIndex >= 0 && d.data.originalIndex === selectedIndex;
-
             const nodeG = g.append('g').selectAll('g').data(root.descendants()).join('g')
-                .attr('class', d => {
-                    const parts = ['tree-node', `node-${d.data.nodeType || 'non-leaf'}`];
-                    if (isSelected(d)) parts.push('selected');
-                    return parts.join(' ');
-                })
+                .attr('class', d => `tree-node node-${d.data.nodeType || 'non-leaf'}`)
                 .attr('transform', d => `translate(${d.x - NW / 2}, ${d.y})`)
                 .on('mouseenter', function() { d3.select(this).raise(); })
-                .on('click', (event, d) => {
+                .on('click', function(event, d) {
                     event.stopPropagation();
+                    const el = this;
+                    d3.select(el).classed('node-flash', true);
+                    setTimeout(() => d3.select(el).classed('node-flash', false), 350);
                     if (typeof onNodeClick === 'function') {
                         onNodeClick(d.data.originalIndex);
                     }
@@ -125,11 +122,7 @@
 
             nodeG.append('foreignObject').attr('width', NW).attr('height', NH)
                 .append('xhtml:div')
-                .attr('class', d => {
-                    const parts = ['node-inner', `node-inner-${d.data.nodeType || 'non-leaf'}`];
-                    if (isSelected(d)) parts.push('node-inner-selected');
-                    return parts.join(' ');
-                })
+                .attr('class', d => `node-inner node-inner-${d.data.nodeType || 'non-leaf'}`)
                 .html(d => {
                     const t = this._esc(d.data.title);
                     const ds = this._esc(d.data.desc);
@@ -197,6 +190,10 @@
             this.saveButton?.addEventListener('click', () => {
                 vscode.postMessage({ type: 'executeCommand', commandId: 'save', payload: {} });
             });
+
+            this.resetButton?.addEventListener('click', () => {
+                vscode.postMessage({ type: 'executeCommand', commandId: 'resetWorkspace', payload: {} });
+            });
         },
 
         _changeZoom(delta) {
@@ -223,9 +220,8 @@
         },
 
         _updateSaveButton() {
-            if (this.saveButton) {
-                this.saveButton.disabled = State.isBusy;
-            }
+            if (this.saveButton)  this.saveButton.disabled  = State.isBusy;
+            if (this.resetButton) this.resetButton.disabled = State.isBusy;
         },
 
         _esc(s) { return _esc(s); }
@@ -420,7 +416,6 @@
 
             TreeView.render(
                 State.treeRoot,
-                State.currentModule,
                 idx => vscode.postMessage({
                     type: 'executeCommand',
                     commandId: 'selectDesignTreeModule',

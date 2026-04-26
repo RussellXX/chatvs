@@ -116,7 +116,6 @@ export class WorkspaceManager {
 
     // ── Design-tree state (derived from workspaceRoot / draft overlay) ──
     private dtNodes: TreeNodeData[] = [];
-    private dtCurrentModule = -1;
     private dtIndexToPath = new Map<number, string>();
 
     private isBusy = false;
@@ -153,7 +152,6 @@ export class WorkspaceManager {
         this.workspaceRoot = cloneTree(projectNode);
         this.currentModule = -1;
         this.currentRefinementEntry = -1;
-        this.dtCurrentModule = -1;
         this.refinementHistories = {};
         this.moduleStatuses = {};
         this.isBusy = false;
@@ -547,7 +545,7 @@ export class WorkspaceManager {
             }
 
             if (removedCurrentHasCode && isFirstLeaf) {
-                // Delete the entire real codes directory for this project.
+                // Delete the real codes directory (per CLAUDE.md, CommonDS is preserved).
                 try {
                     const realCodeDir = path.join(settings.getCodesPath(), projectName);
                     if (fs.existsSync(realCodeDir)) {
@@ -556,7 +554,6 @@ export class WorkspaceManager {
                 } catch (err) {
                     console.warn('[WorkspaceManager] 清理代码目录失败:', err);
                 }
-                this._commonDS.clearReal(projectAbs);
                 DesignmentTreeDataProvider.getInstance().refresh(undefined);
             }
 
@@ -703,6 +700,62 @@ export class WorkspaceManager {
         vscode.window.showInformationMessage('设计树已保存。');
     }
 
+    /**
+     * Reset the design-tree workspace: discard all draft changes and reload
+     * the module structure from the actual project directory.
+     */
+    async resetWorkspace(): Promise<void> {
+        if (!this.projectRoot || !this.workspaceRoot) return;
+
+        cleanDraft(this.projectRoot.absolutePath);
+        this._pendingRealDeletes = new Set();
+        this.workspaceRoot = cloneTree(this.projectRoot);
+
+        this.rebuildDesignTreeState();
+        this.postUpdate();
+    }
+
+    /**
+     * Clear all workspace state (called when the loaded project is deleted).
+     * Disposes the design-tree panel and posts empty state to both panels.
+     */
+    clearWorkspace(): void {
+        if (this.projectRoot) {
+            cleanDraft(this.projectRoot.absolutePath);
+        }
+        this.projectRoot = null;
+        this.workspaceRoot = null;
+        this.nodes = [];
+        this.leafOrder = [];
+        this.leafModuleIndices = new Set();
+        this.currentModule = -1;
+        this.currentRefinementEntry = -1;
+        this.refinementHistories = {};
+        this.moduleStatuses = {};
+        this.indexToPath = new Map();
+        this.dtNodes = [];
+        this.dtIndexToPath = new Map();
+        this.isBusy = false;
+        this._commonDS.reset();
+        this._pendingRealDeletes = new Set();
+
+        this.postUpdate();
+        DesignTreeViewProvider.currentPanel?.dispose();
+    }
+
+    /**
+     * If the project at `absolutePath` is currently loaded, clear the workspace.
+     * Safe to call even when WorkspaceManager has not been initialised.
+     */
+    static clearIfLoaded(absolutePath: string): void {
+        if (!WorkspaceManager._instance) return;
+        const loaded = WorkspaceManager._instance.projectRoot?.absolutePath;
+        if (!loaded) return;
+        if (normPath(loaded) === normPath(absolutePath)) {
+            WorkspaceManager._instance.clearWorkspace();
+        }
+    }
+
     /** Open the common_data_structures.json file in the editor. */
     async openCommonDS(): Promise<void> {
         if (!this.projectRoot) return;
@@ -746,11 +799,6 @@ export class WorkspaceManager {
         // Remove all leaf names in the subtree from draft manifests.
         const leafNames = this._collectLeafNames(node);
         this._removeLeafNamesFromDraftManifests(leafNames);
-
-        // If the parent module has no more children it has become a leaf — restore it.
-        if (parent instanceof ModuleNode && parent.children.length === 0) {
-            this._restoreModuleToManifests(parent);
-        }
 
         // Delete or queue the subtree root (fs.rmSync is recursive).
         if (isDraftPath(projectAbs, targetPath)) {
@@ -847,8 +895,8 @@ export class WorkspaceManager {
 
         if (!isRoot && (parentNode as ModuleNode).isLeaf()) {
             const parentFullName = (parentNode as ModuleNode).getPrefix();
-            ongoing    = ongoing.filter((m: any) => m.name !== parentFullName);
-            allModules = allModules.filter((m: any) => m.name !== parentFullName);
+            // Remove parent from ongoing (current leaves) only; allModules is cumulative.
+            ongoing = ongoing.filter((m: any) => m.name !== parentFullName);
         }
 
         allModules.push(spec);
@@ -869,9 +917,6 @@ export class WorkspaceManager {
         this.currentModule = nodeIndex;
         this.currentRefinementEntry = -1;
 
-        const selectedPath = this.indexToPath.get(nodeIndex);
-        this.dtCurrentModule = selectedPath ? this._findDesignTreeIndexByPath(selectedPath) : -1;
-
         if (this.leafModuleIndices.has(nodeIndex)) {
             const history = this.refinementHistories[nodeIndex];
             if (history && history.length > 0) {
@@ -891,21 +936,9 @@ export class WorkspaceManager {
         this.postUpdate();
     }
 
-    /** Select a module from the design tree (does not affect operation panel state). */
+    /** Select a node in the design tree: open its content file in the editor. */
     selectDesignTreeModule(nodeIndex: number): void {
-        this.dtCurrentModule = nodeIndex;
-
         const absPath = this.dtIndexToPath.get(nodeIndex);
-        const opIndex = absPath ? this._findOperationIndexByPath(absPath) : -1;
-        this.currentModule = opIndex;
-        this.currentRefinementEntry = -1;
-        if (opIndex >= 0) {
-            const history = this.refinementHistories[opIndex];
-            if (history && history.length > 0) {
-                this.currentRefinementEntry = this.getActiveRefinementIndex(history);
-            }
-        }
-
         if (absPath) {
             const contentFile = path.join(absPath, 'content.txt');
             if (fs.existsSync(contentFile)) {
@@ -1008,40 +1041,6 @@ export class WorkspaceManager {
         }
     }
 
-    /**
-     * Re-add a module node to the draft manifests as a leaf (called when all its
-     * children have been deleted and it has reverted to being a leaf itself).
-     */
-    private _restoreModuleToManifests(node: ModuleNode): void {
-        if (!this.projectRoot) return;
-        const projectAbs   = this.projectRoot.absolutePath;
-        const nodeRealPath = isDraftPath(projectAbs, node.absolutePath)
-            ? toRealPath(projectAbs, node.absolutePath)
-            : node.absolutePath;
-
-        const raw: any   = readJsonDraftFirst(projectAbs, path.join(nodeRealPath, 'content.txt'));
-        const fullName   = node.getPrefix();
-        const entry: any = {
-            name:         typeof raw?.name === 'string' ? raw.name : fullName,
-            description:  typeof raw?.description === 'string' ? raw.description : '',
-            dependencies: Array.isArray(raw?.dependencies) ? raw.dependencies : [],
-            path:         typeof raw?.path === 'string' ? raw.path
-                              : path.join(this.projectRoot.label, fullName.replace(/\./g, path.sep))
-        };
-
-        const modulesRealPath  = path.join(projectAbs, 'modules.json');
-        const ongoingRealPath  = path.join(projectAbs, 'ongoing_leaf_modules.json');
-
-        const allModules: any[] = readJsonDraftFirst(projectAbs, modulesRealPath);
-        const ongoing: any[]    = readJsonDraftFirst(projectAbs, ongoingRealPath);
-
-        if (!allModules.some((m: any) => m.name === entry.name)) allModules.push(entry);
-        if (!ongoing.some((m: any)    => m.name === entry.name)) ongoing.push(entry);
-
-        writeJsonAtomically(toDraftPath(projectAbs, modulesRealPath), allModules);
-        writeJsonAtomically(toDraftPath(projectAbs, ongoingRealPath), ongoing);
-    }
-
     /** Ensure a leaf module has a spec entry in draft manifests (upsert by name). */
     private _ensureLeafSpecInDraftManifests(moduleNode: ModuleNode): void {
         if (!this.projectRoot) return;
@@ -1090,41 +1089,6 @@ export class WorkspaceManager {
             dependencies,
             path: path.join(this.projectRoot!.label, fullName.replace(/\./g, path.sep))
         };
-    }
-
-    /** Map an operation-panel node path to design-tree index (supports real/draft equivalence). */
-    private _findDesignTreeIndexByPath(absPath: string): number {
-        if (!this.projectRoot) return -1;
-        const projectAbs = this.projectRoot.absolutePath;
-        const targetNorm = normPath(absPath);
-        const targetReal = isDraftPath(projectAbs, absPath)
-            ? normPath(toRealPath(projectAbs, absPath))
-            : targetNorm;
-
-        for (const [idx, dtPath] of this.dtIndexToPath.entries()) {
-            const dtNorm = normPath(dtPath);
-            if (dtNorm === targetNorm) return idx;
-
-            const dtReal = isDraftPath(projectAbs, dtPath)
-                ? normPath(toRealPath(projectAbs, dtPath))
-                : dtNorm;
-            if (dtReal === targetReal) return idx;
-        }
-        return -1;
-    }
-
-    /** Map a design-tree node path to operation-panel index (supports real/draft equivalence). */
-    private _findOperationIndexByPath(absPath: string): number {
-        if (!this.projectRoot) return -1;
-        const projectAbs = this.projectRoot.absolutePath;
-        const targetReal = isDraftPath(projectAbs, absPath)
-            ? normPath(toRealPath(projectAbs, absPath))
-            : normPath(absPath);
-
-        for (const [idx, opPath] of this.indexToPath.entries()) {
-            if (normPath(opPath) === targetReal) return idx;
-        }
-        return -1;
     }
 
     /**
@@ -1598,10 +1562,12 @@ export class WorkspaceManager {
                 }
             }
 
+            let desc = '';
+            try { desc = readModuleDesc(node.absolutePath); } catch { desc = ''; }
             nodes.push({
                 nodeType,
                 title: node.label,
-                desc: readModuleDesc(node.absolutePath),
+                desc,
                 childCount: moduleChildren.length
             });
 
@@ -1735,11 +1701,8 @@ export class WorkspaceManager {
      * This is the only state sent to the design-tree panel.
      */
     private rebuildDesignTreeState(): void {
-        const prevSelectedPath = this.dtIndexToPath.get(this.dtCurrentModule);
-
         if (!this.workspaceRoot) {
             this.dtNodes = [];
-            this.dtCurrentModule = -1;
             this.dtIndexToPath = new Map();
             return;
         }
@@ -1781,33 +1744,6 @@ export class WorkspaceManager {
 
         this.dtNodes = nodes;
         this.dtIndexToPath = indexToPath;
-
-        if (prevSelectedPath) {
-            const projectAbs = this.projectRoot?.absolutePath;
-            const prevNorm = normPath(prevSelectedPath);
-            const prevReal = projectAbs && isDraftPath(projectAbs, prevSelectedPath)
-                ? normPath(toRealPath(projectAbs, prevSelectedPath))
-                : prevNorm;
-
-            let remapped = -1;
-            for (const [idx, p] of this.dtIndexToPath.entries()) {
-                const pn = normPath(p);
-                if (pn === prevNorm) {
-                    remapped = idx;
-                    break;
-                }
-                if (projectAbs) {
-                    const pr = isDraftPath(projectAbs, p) ? normPath(toRealPath(projectAbs, p)) : pn;
-                    if (pr === prevReal) {
-                        remapped = idx;
-                        break;
-                    }
-                }
-            }
-            this.dtCurrentModule = remapped;
-        } else {
-            this.dtCurrentModule = -1;
-        }
     }
 
     private canOperate(nodeIndex: number): boolean {
@@ -1896,7 +1832,7 @@ export class WorkspaceManager {
         return {
             nodes: this.dtNodes,
             leafOrder: [],
-            currentModule: this.dtCurrentModule,
+            currentModule: -1,
             refinementHistories: {},
             currentRefinementEntry: -1,
             moduleStatuses: {},

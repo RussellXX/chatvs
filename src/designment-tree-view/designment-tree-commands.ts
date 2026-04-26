@@ -1,7 +1,7 @@
 import * as vscode from 'vscode'
 import * as fs from 'fs'
 import * as designmentService from './designment-tree-service'
-import { DesignmentTreeDataProvider, DesignmentTreeNode } from './designment-tree-data-provider'
+import { DesignmentTreeDataProvider, DesignmentTreeNode, ProjectNode } from './designment-tree-data-provider'
 import * as settings from '../settings/settings';
 import { WorkspaceManager } from '../operation-panel-view/workspace-manager';
 
@@ -52,6 +52,20 @@ const openChatGPTView = (context: vscode.ExtensionContext) => {
             vscode.commands.registerCommand('refinement.loadProjectToWorkspace', async (node: DesignmentTreeNode) => {
                 if (!node) return;
                 await WorkspaceManager.getInstance().loadProject(node.getRoot());
+            })
+        )
+
+        // Right-click → delete project
+        context.subscriptions.push(
+            vscode.commands.registerCommand('refinement.deleteProject', async (node: ProjectNode) => {
+                if (!node) return;
+                const answer = await vscode.window.showWarningMessage(
+                    `是否确定要删除项目 "${node.label}"？此操作不可撤销。`,
+                    { modal: true },
+                    '确定删除'
+                );
+                if (answer !== '确定删除') return;
+                await designmentService.deleteProject(node);
             })
         )
 

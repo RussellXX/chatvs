@@ -3,6 +3,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as settings from '../settings/settings'
 import { DesignmentTreeDataProvider, ProjectNode, RequirementNode } from './designment-tree-data-provider'
+import { WorkspaceManager } from '../operation-panel-view/workspace-manager'
 
 export async function createProject(label: string) {
 
@@ -35,5 +36,31 @@ export async function createProject(label: string) {
     newProjectNode.children.push(requirementNode);
 
     dataProvider.localNodeTree.push(newProjectNode);
+    dataProvider.refresh(undefined);
+}
+
+export async function deleteProject(node: ProjectNode): Promise<void> {
+    const dataProvider = DesignmentTreeDataProvider.getInstance();
+
+    // If this project is currently loaded in the workspace, clear it first.
+    WorkspaceManager.clearIfLoaded(node.absolutePath);
+
+    // Delete the pseudocodes project directory.
+    if (fs.existsSync(node.absolutePath)) {
+        fs.rmSync(node.absolutePath, { recursive: true, force: true });
+    }
+
+    // Also delete the corresponding codes directory if it exists.
+    try {
+        const projectName = path.basename(node.absolutePath);
+        const codesDir = path.join(settings.getCodesPath(), projectName);
+        if (fs.existsSync(codesDir)) {
+            fs.rmSync(codesDir, { recursive: true, force: true });
+        }
+    } catch { /* codes dir may not exist or settings not configured */ }
+
+    // Remove from the in-memory tree and persist.
+    const idx = dataProvider.localNodeTree.indexOf(node);
+    if (idx >= 0) dataProvider.localNodeTree.splice(idx, 1);
     dataProvider.refresh(undefined);
 }

@@ -60,6 +60,7 @@ export type WebviewCommandId =
     | 'addChildNode'
     | 'confirmAddChildNode'
     | 'save'
+    | 'resetWorkspace'
     | 'refine'
     | 'localRefine'
     | 'generateCode'

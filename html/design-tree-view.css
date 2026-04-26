@@ -3,7 +3,6 @@
     --node-root-bg:      var(--vscode-editorInfo-foreground, #3794ff);
     --node-nonleaf-bg:   var(--vscode-editorWidget-background, #252526);
     --node-leaf-bg:      var(--vscode-editorHoverWidget-background, #2d2d30);
-    --node-selected-outline: var(--vscode-focusBorder, #007acc);
     --node-border:       var(--vscode-panel-border, #454545);
     --link-color:        var(--vscode-editorLineNumber-foreground, #858585);
     --text-color:        var(--vscode-foreground, #cccccc);
@@ -60,7 +59,7 @@ body {
     bottom: 0;
     right: 0;
     z-index: 4;
-    width: 92px;
+    width: 160px;
     height: 56px;
     pointer-events: none;
 }
@@ -143,14 +142,19 @@ body {
     transition: stroke 0.13s, stroke-width 0.13s;
 }
 
+@keyframes node-click-flash {
+    0%   { stroke: var(--vscode-focusBorder, #007acc); stroke-width: 2.5px; }
+    100% { stroke: var(--node-border);                 stroke-width: 1px;   }
+}
+
+.tree-node.node-flash rect {
+    animation: node-click-flash 0.35s ease-out forwards;
+    transition: none;
+}
+
 .tree-node.node-root       rect { fill: var(--node-root-bg); }
 .tree-node.node-non-leaf   rect { fill: var(--node-nonleaf-bg); }
 .tree-node.node-leaf       rect { fill: var(--node-leaf-bg); stroke: #4ec9b0; stroke-width: 1.5px; }
-
-.tree-node.selected rect {
-    stroke: var(--node-selected-outline);
-    stroke-width: 2px;
-}
 
 .tree-node { cursor: pointer; }
 
@@ -201,9 +205,6 @@ body {
 
 .node-inner-root .node-title { color: #ffffff; }
 .node-inner-root .node-desc  { color: rgba(255,255,255,0.80); }
-
-.node-inner-selected .node-title,
-.node-inner-selected .node-desc { color: #ffffff; }
 
 /* ─── Node action bar (hover buttons on divide-eligible nodes) ───────────── */
 .node-action-bar-fo {

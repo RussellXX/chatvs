@@ -12,7 +12,14 @@
     <div id="tree-root" class="tree-root">
         <!-- Save toolbar (bottom-right) -->
         <div class="save-toolbar-zone" aria-hidden="true"></div>
-        <div class="save-toolbar" aria-label="保存工具">
+        <div class="save-toolbar" aria-label="设计树工具">
+            <button type="button" id="reset-btn" class="tree-toolbar-btn" title="重置工作区（丢弃全部未保存的划分修改）" aria-label="重置工作区">
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="M2 8a6 6 0 1 1 1.5 4"></path>
+                    <polyline points="2,5 2,8 5,8"></polyline>
+                </svg>
+                <span class="save-btn-label">重置</span>
+            </button>
             <button type="button" id="save-btn" class="tree-toolbar-btn save-btn" title="保存设计树" aria-label="保存设计树">
                 <svg viewBox="0 0 16 16" aria-hidden="true">
                     <path d="M13.5 1.5H3.5A2 2 0 0 0 1.5 3.5v9A2 2 0 0 0 3.5 14.5h9A2 2 0 0 0 14.5 12.5V2.5L13.5 1.5Z"></path>
