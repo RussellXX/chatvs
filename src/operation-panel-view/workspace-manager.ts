@@ -743,6 +743,11 @@ export class WorkspaceManager {
         const leafNames = this._collectLeafNames(node);
         this._removeLeafNamesFromDraftManifests(leafNames);
 
+        // If the parent module has no more children it has become a leaf — restore it.
+        if (parent instanceof ModuleNode && parent.children.length === 0) {
+            this._restoreModuleToManifests(parent);
+        }
+
         // Delete or queue the subtree root (fs.rmSync is recursive).
         if (isDraftPath(projectAbs, targetPath)) {
             try {
@@ -930,28 +935,88 @@ export class WorkspaceManager {
         return names;
     }
 
-    /** Remove a set of leaf module names from the draft manifest files, cleaning up dep references too. */
+    /** Remove a set of leaf module names from the draft manifest files, cleaning up dep references too.
+     *  Also writes updated content.txt drafts for any surviving module whose deps were affected. */
     private _removeLeafNamesFromDraftManifests(leafNames: string[]): void {
         if (!this.projectRoot || leafNames.length === 0) return;
         const nameSet          = new Set(leafNames);
         const projectAbs       = this.projectRoot.absolutePath;
+        const pseudoPath       = settings.getPseudoPath();
         const modulesRealPath  = path.join(projectAbs, 'modules.json');
         const ongoingRealPath  = path.join(projectAbs, 'ongoing_leaf_modules.json');
         const modulesDraftPath = toDraftPath(projectAbs, modulesRealPath);
         const ongoingDraftPath = toDraftPath(projectAbs, ongoingRealPath);
 
-        const clean = (arr: any[]) => {
+        const depUpdated: any[] = [];
+
+        const clean = (arr: any[], track?: any[]) => {
             const filtered = arr.filter((m: any) => !nameSet.has(m.name));
             filtered.forEach((m: any) => {
                 if (Array.isArray(m.dependencies)) {
+                    const before = m.dependencies.length;
                     m.dependencies = m.dependencies.filter((d: string) => !nameSet.has(d));
+                    if (track && m.dependencies.length !== before) track.push(m);
                 }
             });
             return filtered;
         };
 
         writeJsonAtomically(modulesDraftPath, clean(readJsonDraftFirst(projectAbs, modulesRealPath)));
-        writeJsonAtomically(ongoingDraftPath, clean(readJsonDraftFirst(projectAbs, ongoingRealPath)));
+        writeJsonAtomically(ongoingDraftPath, clean(readJsonDraftFirst(projectAbs, ongoingRealPath), depUpdated));
+
+        // Persist dep-cleaned content.txt files to draft so _validateLeafTopology reads them.
+        for (const mod of depUpdated) {
+            if (!mod.path) continue;
+            const modRealDir       = path.join(pseudoPath, String(mod.path).replace(/[\/\\]/g, path.sep));
+            const contentRealPath  = path.join(modRealDir, 'content.txt');
+            const contentDraftPath = toDraftPath(projectAbs, contentRealPath);
+            try {
+                const src = fs.existsSync(contentDraftPath) ? contentDraftPath : contentRealPath;
+                const existing = fs.existsSync(src) ? JSON.parse(fs.readFileSync(src, 'utf8')) : {};
+                fs.mkdirSync(path.dirname(contentDraftPath), { recursive: true });
+                fs.writeFileSync(
+                    contentDraftPath,
+                    JSON.stringify({ ...existing, dependencies: mod.dependencies }, null, 2),
+                    'utf8'
+                );
+            } catch (err) {
+                console.warn('[WorkspaceManager] 清理依赖 content.txt 失败:', err);
+            }
+        }
+    }
+
+    /**
+     * Re-add a module node to the draft manifests as a leaf (called when all its
+     * children have been deleted and it has reverted to being a leaf itself).
+     */
+    private _restoreModuleToManifests(node: ModuleNode): void {
+        if (!this.projectRoot) return;
+        const projectAbs   = this.projectRoot.absolutePath;
+        const nodeRealPath = isDraftPath(projectAbs, node.absolutePath)
+            ? toRealPath(projectAbs, node.absolutePath)
+            : node.absolutePath;
+
+        const raw: any   = readJsonDraftFirst(projectAbs, path.join(nodeRealPath, 'content.txt'));
+        const fullName   = node.getPrefix();
+        const entry: any = {
+            name:         typeof raw?.name === 'string' ? raw.name : fullName,
+            description:  typeof raw?.description === 'string' ? raw.description : '',
+            dependencies: Array.isArray(raw?.dependencies) ? raw.dependencies : [],
+            path:         typeof raw?.path === 'string' ? raw.path
+                              : path.join(this.projectRoot.label, fullName.replace(/\./g, path.sep))
+        };
+
+        const modulesRealPath  = path.join(projectAbs, 'modules.json');
+        const ongoingRealPath  = path.join(projectAbs, 'ongoing_leaf_modules.json');
+
+        const allModules: any[] = readJsonDraftFirst(projectAbs, modulesRealPath);
+        const ongoing: any[]    = readJsonDraftFirst(projectAbs, ongoingRealPath);
+
+        if (!allModules.some((m: any) => m.name === entry.name)) allModules.push(entry);
+        if (!ongoing.some((m: any)    => m.name === entry.name)) ongoing.push(entry);
+
+        writeJsonAtomically(toDraftPath(projectAbs, modulesRealPath), allModules);
+        writeJsonAtomically(toDraftPath(projectAbs, ongoingRealPath), ongoing);
     }
 
     /**
