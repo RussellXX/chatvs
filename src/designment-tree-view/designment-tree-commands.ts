@@ -1,7 +1,7 @@
 import * as vscode from 'vscode'
 import * as fs from 'fs'
 import * as designmentService from './designment-tree-service'
-import { DesignmentTreeDataProvider, DesignmentTreeNode, ProjectNode } from './designment-tree-data-provider'
+import { DesignmentTreeDataProvider, DesignmentTreeNode, ProjectNode, ModuleNode } from './designment-tree-data-provider'
 import * as settings from '../settings/settings';
 import { WorkspaceManager } from '../operation-panel-view/workspace-manager';
 
@@ -30,7 +30,8 @@ const openChatGPTView = (context: vscode.ExtensionContext) => {
 
         context.subscriptions.push(treeView);
 
-        // Listen to node selection — only open content file, no workspace loading
+        // Click any node: open its content file and load the refinement panel.
+        // Leaf module nodes additionally pre-select themselves in the panel.
         treeView.onDidChangeSelection(async event => {
             if (event.selection.length !== 1) return;
 
@@ -45,20 +46,22 @@ const openChatGPTView = (context: vscode.ExtensionContext) => {
                     console.error('Failed to open content file:', err);
                 }
             }
+
+            const leafPath = (selected instanceof ModuleNode && selected.isLeaf())
+                ? selected.absolutePath
+                : undefined;
+            try {
+                await WorkspaceManager.getInstance().loadRefinementPanel(selected.getRoot(), leafPath);
+            } catch (err) {
+                console.error('Failed to load refinement panel:', err);
+            }
         })
 
-        // Right-click commands on project root node
+        // Right-click command on project root node — opens design tree workspace
         context.subscriptions.push(
             vscode.commands.registerCommand('refinement.openDesignTree', async (node: DesignmentTreeNode) => {
                 if (!node) return;
                 await WorkspaceManager.getInstance().openDesignTree(node.getRoot());
-            })
-        )
-
-        context.subscriptions.push(
-            vscode.commands.registerCommand('refinement.loadRefinementPanel', async (node: DesignmentTreeNode) => {
-                if (!node) return;
-                await WorkspaceManager.getInstance().loadRefinementPanel(node.getRoot());
             })
         )
 

@@ -70,10 +70,6 @@
         "title": "修改模块划分层级结构"
       },
       {
-        "command": "refinement.loadRefinementPanel",
-        "title": "逐模块精化项目"
-      },
-      {
         "command": "CodeToolBox.createProj",
         "title": "创建项目",
         "icon": "images/add-proj.svg"
@@ -150,14 +146,9 @@
           "group": "0_workspace@1"
         },
         {
-          "command": "refinement.loadRefinementPanel",
-          "when": "view == CodeToolBox.chatGPTView && viewItem == projectNode",
-          "group": "0_workspace@2"
-        },
-        {
           "command": "refinement.deleteProject",
           "when": "view == CodeToolBox.chatGPTView && viewItem == projectNode",
-          "group": "0_workspace@3"
+          "group": "0_workspace@2"
         }
       ]
     }

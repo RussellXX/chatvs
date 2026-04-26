@@ -167,8 +167,12 @@ export class WorkspaceManager {
      * Load the operation panel with the refinement state of the given project.
      * Does NOT open the design-tree panel.
      * Preserves any in-progress workspaceRoot draft if the project hasn't changed.
+     *
+     * @param initialLeafPath  Absolute path of a leaf module to pre-select after
+     *   loading (e.g. when the user clicks a leaf node in the TreeView).
+     *   Omit or pass undefined to start with no selection.
      */
-    async loadRefinementPanel(projectNode: ProjectNode): Promise<void> {
+    async loadRefinementPanel(projectNode: ProjectNode, initialLeafPath?: string): Promise<void> {
         this.projectRoot = projectNode;
         // Keep workspaceRoot intact when reloading the same project so that any
         // unsaved design-tree work is not discarded.
@@ -183,6 +187,21 @@ export class WorkspaceManager {
         this.isBusy = false;
         this._commonDS.reset();
         this.rebuildDerivedState();
+
+        // Pre-select a specific leaf module when requested (e.g. clicked from TreeView).
+        if (initialLeafPath) {
+            for (const [idx, p] of this.indexToPath.entries()) {
+                if (p === initialLeafPath && this.leafModuleIndices.has(idx)) {
+                    this.currentModule = idx;
+                    const history = this.refinementHistories[idx];
+                    if (history && history.length > 0) {
+                        this.currentRefinementEntry = this.getActiveRefinementIndex(history);
+                    }
+                    break;
+                }
+            }
+        }
+
         this.postUpdate();
     }
 
