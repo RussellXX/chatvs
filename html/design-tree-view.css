@@ -62,7 +62,7 @@ body {
     z-index: 4;
     width: 92px;
     height: 56px;
-    pointer-events: auto;
+    pointer-events: none;
 }
 
 .save-toolbar {
@@ -74,22 +74,15 @@ body {
     gap: 6px;
     padding: 4px;
     border-radius: 8px;
-    border: 1px solid color-mix(in srgb, var(--vscode-panel-border, #454545) 74%, transparent);
+    border: 1px solid var(--vscode-panel-border, #454545);
     background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 90%, transparent);
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+    -webkit-backdrop-filter: blur(6px);
     backdrop-filter: blur(6px);
-    opacity: 0;
-    pointer-events: none;
-    transform: translateY(4px);
-    transition: opacity 0.16s ease, transform 0.16s ease;
-}
-
-.save-toolbar-zone:hover + .save-toolbar,
-.save-toolbar:hover,
-.save-toolbar:focus-within {
     opacity: 1;
     pointer-events: auto;
     transform: translateY(0);
+    transition: opacity 0.16s ease, transform 0.16s ease;
 }
 
 .tree-toolbar-btn {
@@ -233,9 +226,10 @@ body {
     padding: 4px;
     box-sizing: border-box;
     border-radius: 8px;
-    border: 1px solid color-mix(in srgb, var(--vscode-panel-border, #454545) 74%, transparent);
+    border: 1px solid var(--vscode-panel-border, #454545);
     background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e) 90%, transparent);
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+    -webkit-backdrop-filter: blur(6px);
     backdrop-filter: blur(6px);
     opacity: 0;
     transform: translateX(-4px);
@@ -273,7 +267,7 @@ body {
 .action-bar-btn:hover {
     background: color-mix(in srgb, var(--vscode-toolbar-hoverBackground, #2a2d2e) 72%, transparent);
     color: var(--vscode-foreground, #cccccc);
-    border-color: color-mix(in srgb, var(--vscode-panel-border, #454545) 60%, transparent);
+    border-color: var(--vscode-panel-border, #454545);
 }
 
 .action-bar-btn:focus-visible {
