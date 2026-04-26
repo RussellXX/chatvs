@@ -964,11 +964,15 @@ export class WorkspaceManager {
                 leafNameSet.add(name);
                 let deps: string[] = [];
                 try {
-                    const cp = path.join(node.absolutePath, 'content.txt');
-                    if (fs.existsSync(cp)) {
-                        const json = JSON.parse(fs.readFileSync(cp, 'utf8'));
-                        deps = Array.isArray(json.dependencies) ? json.dependencies : [];
-                    }
+                    const projectAbs  = this.projectRoot!.absolutePath;
+                    // Resolve to the real path so toDraftPath produces a correct draft path,
+                    // then prefer draft if it exists (dep-propagation writes updates there).
+                    const nodeRealDir = isDraftPath(projectAbs, node.absolutePath)
+                        ? toRealPath(projectAbs, node.absolutePath)
+                        : node.absolutePath;
+                    const realContent  = path.join(nodeRealDir, 'content.txt');
+                    const json: any = readJsonDraftFirst(projectAbs, realContent);
+                    deps = Array.isArray(json?.dependencies) ? json.dependencies : [];
                 } catch { deps = []; }
                 leafNodes.push({ name, deps });
             }
@@ -1227,16 +1231,45 @@ export class WorkspaceManager {
             );
 
             const newNames = result.map((m: DivisionModuleSpec) => m.name);
-            const propagateDeps = (list: any[]) => list.forEach((m: any) => {
+
+            // Track which ongoing modules had their deps updated so we can
+            // persist the change to their content.txt in the draft overlay.
+            const updatedOngoing = new Set<any>();
+            const propagateDeps = (list: any[], track?: Set<any>) => list.forEach((m: any) => {
                 if (m.dependencies?.includes(parentName)) {
                     m.dependencies = m.dependencies.filter((d: string) => d !== parentName);
                     newNames.forEach((n: string) => {
                         if (!m.dependencies.includes(n)) m.dependencies.push(n);
                     });
+                    track?.add(m);
                 }
             });
-            propagateDeps(ongoing);
+            propagateDeps(ongoing, updatedOngoing);
             propagateDeps(allModules);
+
+            // Write updated content.txt files to the draft for affected modules.
+            for (const mod of updatedOngoing) {
+                if (!mod.path) continue;
+                const modRealDir = path.join(
+                    pseudoPath, String(mod.path).replace(/[\/\\]/g, path.sep)
+                );
+                const contentRealPath  = path.join(modRealDir, 'content.txt');
+                const contentDraftPath = toDraftPath(projectPath, contentRealPath);
+                try {
+                    const src = fs.existsSync(contentDraftPath) ? contentDraftPath : contentRealPath;
+                    const existing = fs.existsSync(src)
+                        ? JSON.parse(fs.readFileSync(src, 'utf8'))
+                        : {};
+                    fs.mkdirSync(path.dirname(contentDraftPath), { recursive: true });
+                    fs.writeFileSync(
+                        contentDraftPath,
+                        JSON.stringify({ ...existing, dependencies: mod.dependencies }, null, 2),
+                        'utf8'
+                    );
+                } catch (err) {
+                    console.warn('[WorkspaceManager] 更新依赖模块 content.txt 失败:', err);
+                }
+            }
         }
 
         for (const mod of result) {
