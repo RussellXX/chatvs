@@ -145,22 +145,45 @@ export class WorkspaceManager {
 
     // ── public API ────────────────────────────────────────────────────────
 
-    async loadProject(projectNode: ProjectNode): Promise<void> {
+    /**
+     * Open the design-tree workspace for the given project.
+     * Cleans any stale draft, resets the workspace overlay, and reveals the
+     * design-tree panel.  Does NOT touch operation-panel state.
+     */
+    async openDesignTree(projectNode: ProjectNode): Promise<void> {
         cleanDraft(projectNode.absolutePath);
-
         this.projectRoot = projectNode;
         this.workspaceRoot = cloneTree(projectNode);
+        this.isBusy = false;
+        this._commonDS.reset();
+        this._pendingRealDeletes = new Set();
+        this.rebuildDesignTreeState();
+        // Store payload before createOrShow so the webviewReady handler gets it.
+        DesignTreeViewProvider.postMessage({ type: 'updateView', data: this.buildDesignTreePayload() });
+        DesignTreeViewProvider.createOrShow();
+    }
+
+    /**
+     * Load the operation panel with the refinement state of the given project.
+     * Does NOT open the design-tree panel.
+     * Preserves any in-progress workspaceRoot draft if the project hasn't changed.
+     */
+    async loadRefinementPanel(projectNode: ProjectNode): Promise<void> {
+        this.projectRoot = projectNode;
+        // Keep workspaceRoot intact when reloading the same project so that any
+        // unsaved design-tree work is not discarded.
+        if (!this.workspaceRoot || this.workspaceRoot.absolutePath !== projectNode.absolutePath) {
+            this.workspaceRoot = cloneTree(projectNode);
+            this._pendingRealDeletes = new Set();
+        }
         this.currentModule = -1;
         this.currentRefinementEntry = -1;
         this.refinementHistories = {};
         this.moduleStatuses = {};
         this.isBusy = false;
         this._commonDS.reset();
-        this._pendingRealDeletes = new Set();
-
         this.rebuildDerivedState();
         this.postUpdate();
-        DesignTreeViewProvider.createOrShow();
     }
 
     /**
@@ -698,6 +721,7 @@ export class WorkspaceManager {
         DesignmentTreeDataProvider.getInstance().refresh(undefined);
         this.postUpdate();
         vscode.window.showInformationMessage('设计树已保存。');
+        DesignTreeViewProvider.currentPanel?.dispose();
     }
 
     /**

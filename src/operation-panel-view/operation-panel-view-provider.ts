@@ -5,7 +5,6 @@ import {
     WebviewIncomingMessage,
 } from '../types/operation-panel-view-protocol';
 import { WorkspaceManager } from './workspace-manager';
-import { DesignTreeViewProvider } from './design-tree-view-provider';
 
 export class OperationPanelViewProvider implements vscode.WebviewViewProvider {
     public static currentView: vscode.WebviewView | undefined
@@ -64,10 +63,6 @@ export class OperationPanelViewProvider implements vscode.WebviewViewProvider {
 
                 case 'rollbackRefinement':
                     await wm.rollbackRefinement(p?.index ?? -1);
-                    break;
-
-                case 'showDesignTree':
-                    DesignTreeViewProvider.createOrShow();
                     break;
 
                 case 'openCommonDS':

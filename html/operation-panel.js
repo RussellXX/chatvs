@@ -191,37 +191,25 @@
         refineDropdownBtn: null,
         refineSelectedLabel: null,
         refineDropdown: null,
-        generateBtn: null,
         rollbackBtn: null,
         selectedRefineAction: 'refine',
         refineActionLabels: {
             refine: '全局精化',
-            localRefine: '局部精化'
+            localRefine: '局部精化',
+            generateCode: '代码生成'
         },
 
         init() {
-            document.getElementById('show-tree-btn').addEventListener('click', () => {
-                Messenger.executeCommand('showDesignTree', {});
-            });
-
             this.refineMainBtn = document.getElementById('refine-main-btn');
             this.refineDropdownBtn = document.getElementById('refine-dropdown-btn');
             this.refineSelectedLabel = document.getElementById('refine-selected-label');
             this.refineDropdown = document.getElementById('refine-dropdown');
-            this.generateBtn = document.getElementById('generate-btn');
             this.rollbackBtn = document.getElementById('rollback-btn');
 
             this._syncRefineSelectionUi();
 
             this.refineMainBtn.addEventListener('click', () => {
                 Messenger.executeCommand(this.selectedRefineAction, {
-                    index: State.currentModule,
-                    customPrompt: PromptInput.consume()
-                });
-            });
-
-            this.generateBtn.addEventListener('click', () => {
-                Messenger.executeCommand('generateCode', {
                     index: State.currentModule,
                     customPrompt: PromptInput.consume()
                 });
@@ -245,7 +233,7 @@
             this.refineDropdown.querySelectorAll('.dropdown-item').forEach(item => {
                 item.addEventListener('click', () => {
                     const action = item.dataset.action;
-                    if (action !== 'refine' && action !== 'localRefine') {
+                    if (!this.refineActionLabels[action]) {
                         return;
                     }
                     this.selectedRefineAction = action;
@@ -267,7 +255,6 @@
 
             this.refineMainBtn.disabled = busy;
             this.refineDropdownBtn.disabled = busy;
-            this.generateBtn.disabled = busy;
             this.rollbackBtn.disabled = busy;
             PromptInput.setDisabled(busy);
 
@@ -301,7 +288,6 @@
 
                 this.refineMainBtn.disabled = !showRefineAndGenerate || !canOperate;
                 this.refineDropdownBtn.disabled = !showRefineAndGenerate || !canOperate;
-                this.generateBtn.disabled = !showRefineAndGenerate || !canOperate;
                 this.rollbackBtn.disabled = !isLeafModule || !hasSelectedEntry;
             }
         },

@@ -24,11 +24,5 @@ export function registerWebviewForGranularityPanel(context: vscode.ExtensionCont
         vscode.window.registerWebviewViewProvider('OperationPanelView', provider)
     );
 
-    context.subscriptions.push(
-        vscode.commands.registerCommand('refinement.showDesignTree', () => {
-            DesignTreeViewProvider.createOrShow();
-        })
-    );
-
     context.subscriptions.push(refinementDiagnostics);
 }

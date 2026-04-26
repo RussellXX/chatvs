@@ -47,11 +47,18 @@ const openChatGPTView = (context: vscode.ExtensionContext) => {
             }
         })
 
-        // Right-click command on project root node
+        // Right-click commands on project root node
         context.subscriptions.push(
-            vscode.commands.registerCommand('refinement.loadProjectToWorkspace', async (node: DesignmentTreeNode) => {
+            vscode.commands.registerCommand('refinement.openDesignTree', async (node: DesignmentTreeNode) => {
                 if (!node) return;
-                await WorkspaceManager.getInstance().loadProject(node.getRoot());
+                await WorkspaceManager.getInstance().openDesignTree(node.getRoot());
+            })
+        )
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('refinement.loadRefinementPanel', async (node: DesignmentTreeNode) => {
+                if (!node) return;
+                await WorkspaceManager.getInstance().loadRefinementPanel(node.getRoot());
             })
         )
 

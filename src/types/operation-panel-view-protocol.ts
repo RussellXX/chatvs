@@ -66,7 +66,6 @@ export type WebviewCommandId =
     | 'generateCode'
     | 'rollbackRefinement'
     | 'selectRefinement'
-    | 'showDesignTree'
     | 'openCommonDS';
 
 /**

@@ -66,12 +66,12 @@
         "title": "Confirm Line"
       },
       {
-        "command": "refinement.showDesignTree",
-        "title": "显示设计树"
+        "command": "refinement.openDesignTree",
+        "title": "修改模块划分层级结构"
       },
       {
-        "command": "refinement.loadProjectToWorkspace",
-        "title": "将项目加载到工作区"
+        "command": "refinement.loadRefinementPanel",
+        "title": "逐模块精化项目"
       },
       {
         "command": "CodeToolBox.createProj",
@@ -145,14 +145,19 @@
       ],
       "view/item/context": [
         {
-          "command": "refinement.loadProjectToWorkspace",
+          "command": "refinement.openDesignTree",
           "when": "view == CodeToolBox.chatGPTView && viewItem == projectNode",
           "group": "0_workspace@1"
         },
         {
-          "command": "refinement.deleteProject",
+          "command": "refinement.loadRefinementPanel",
           "when": "view == CodeToolBox.chatGPTView && viewItem == projectNode",
           "group": "0_workspace@2"
+        },
+        {
+          "command": "refinement.deleteProject",
+          "when": "view == CodeToolBox.chatGPTView && viewItem == projectNode",
+          "group": "0_workspace@3"
         }
       ]
     }
