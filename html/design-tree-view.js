@@ -191,6 +191,15 @@
                 vscode.postMessage({ type: 'executeCommand', commandId: 'save', payload: {} });
             });
 
+            document.addEventListener('keydown', event => {
+                if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+                    event.preventDefault();
+                    if (!State.isBusy) {
+                        vscode.postMessage({ type: 'executeCommand', commandId: 'save', payload: {} });
+                    }
+                }
+            });
+
             this.resetButton?.addEventListener('click', () => {
                 vscode.postMessage({ type: 'executeCommand', commandId: 'resetWorkspace', payload: {} });
             });

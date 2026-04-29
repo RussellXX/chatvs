@@ -740,7 +740,6 @@ export class WorkspaceManager {
         DesignmentTreeDataProvider.getInstance().refresh(undefined);
         this.postUpdate();
         vscode.window.showInformationMessage('设计树已保存。');
-        DesignTreeViewProvider.currentPanel?.dispose();
     }
 
     /**

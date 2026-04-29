@@ -67,7 +67,8 @@
       },
       {
         "command": "refinement.openDesignTree",
-        "title": "修改模块划分层级结构"
+        "title": "修改模块划分层级结构",
+        "icon": "$(arrow-right)"
       },
       {
         "command": "CodeToolBox.createProj",
@@ -143,7 +144,7 @@
         {
           "command": "refinement.openDesignTree",
           "when": "view == CodeToolBox.chatGPTView && viewItem == projectNode",
-          "group": "0_workspace@1"
+          "group": "inline"
         },
         {
           "command": "refinement.deleteProject",

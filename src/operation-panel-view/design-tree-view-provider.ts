@@ -14,14 +14,14 @@ export class DesignTreeViewProvider {
 
     public static createOrShow(): void {
         if (DesignTreeViewProvider.currentPanel) {
-            DesignTreeViewProvider.currentPanel.reveal(vscode.ViewColumn.Two);
+            DesignTreeViewProvider.currentPanel.reveal(vscode.ViewColumn.One);
             return;
         }
 
         const panel = vscode.window.createWebviewPanel(
             'DesignTreeView',
             '设计树',
-            vscode.ViewColumn.Two,
+            vscode.ViewColumn.One,
             {
                 enableScripts: true,
                 localResourceRoots: [
